@@ -21,6 +21,9 @@
   <ItemGroup>
     <ClCompile Include="libcms.c" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="libcms.h" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
