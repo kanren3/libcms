@@ -5,15 +5,8 @@
 #include <intrin.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/asn1.h>
-#include <mbedtls/x509.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/x509_crl.h>
-#include "mbedtls/oid.h"
-#include "mbedtls/asn1.h"
-#include "mbedtls/asn1write.h"
-#include "mbedtls/x509.h"
-#include "mbedtls/x509_crt.h"
-#include "mbedtls/pkcs7.h"
 #include "libcms.h"
 
 UINT8 CertificateData[20480] = {
@@ -1299,221 +1292,94 @@ UINT8 CertificateData[20480] = {
     0x4D, 0x06, 0x01, 0x47, 0x86, 0x2E, 0xDF, 0xB3, 0x6B, 0x49, 0x11, 0x31, 0x26, 0x92, 0x6F, 0x00
 };
 
-//
-// PKCS7 OID
-// 
-#define MBEDTLS_OID_PKCS7                            MBEDTLS_OID_PKCS "\x07"
-#define MBEDTLS_OID_PKCS7_DATA                       MBEDTLS_OID_PKCS7 "\x01"
-#define MBEDTLS_OID_PKCS7_SIGNED_DATA                MBEDTLS_OID_PKCS7 "\x02"
-#define MBEDTLS_OID_PKCS7_ENVELOPED_DATA             MBEDTLS_OID_PKCS7 "\x03"
-#define MBEDTLS_OID_PKCS7_SIGNED_AND_ENVELOPED_DATA  MBEDTLS_OID_PKCS7 "\x04"
-#define MBEDTLS_OID_PKCS7_DIGESTED_DATA              MBEDTLS_OID_PKCS7 "\x05"
-#define MBEDTLS_OID_PKCS7_ENCRYPTED_DATA             MBEDTLS_OID_PKCS7 "\x06"
-
-typedef mbedtls_x509_crt CMS_PKCS7_CERTIFICATE_SET;
-typedef mbedtls_x509_crl CMS_PKCS7_CRLS;
-
-typedef CMS_PKCS7_CERTIFICATE_SET *PCMS_PKCS7_CERTIFICATE_SET;
-typedef CMS_PKCS7_CRLS *PCMS_PKCS7_CRLS;
-
-typedef struct _CMS_BLOB {
-    PUINT8 Data;
-    SIZE_T Length;
-} CMS_BLOB, *PCMS_BLOB;
-
-typedef struct _CMS_SET_HEADER {
-    BOOLEAN Valid;
-    struct _CMS_SET_HEADER* Next;
-} CMS_SET_HEADER, *PCMS_SET_HEADER;
-
-typedef struct _CMS_PKCS7_ATTRIBUTE_VALUE {
-    CMS_SET_HEADER Header;
-    CMS_BLOB Blob;
-} CMS_PKCS7_ATTRIBUTE_VALUE, *PCMS_PKCS7_ATTRIBUTE_VALUE;
-
-typedef struct _CMS_PKCS7_ATTRIBUTE {
-    CMS_SET_HEADER Header;
-    CMS_BLOB AttributeTypeOid;
-    CMS_PKCS7_ATTRIBUTE_VALUE Values;
-} CMS_PKCS7_ATTRIBUTE, *PCMS_PKCS7_ATTRIBUTE;
-
-typedef struct _CMS_PKCS7_SIGNER_INFO {
-    CMS_SET_HEADER Header;
-    INT32 Version;
-    CMS_BLOB IssuerAndSerialNumber;
-    CMS_BLOB DigestAlgorithm;
-    CMS_BLOB SignedAttrs;
-    CMS_BLOB SignatureAlgorithm;
-    CMS_BLOB Signature;
-    CMS_PKCS7_ATTRIBUTE UnsignedAttributes;
-} CMS_PKCS7_SIGNER_INFO, *PCMS_PKCS7_SIGNER_INFO;
-
-typedef struct _CMS_PKCS7_SIGNED_DATA {
-    INT32 Version;
-    CMS_BLOB DigestAlgorithms;
-    CMS_BLOB EncapContentInfo;
-    CMS_PKCS7_CERTIFICATE_SET Certificates;
-    CMS_PKCS7_CRLS CertificateRevocationLists;
-    CMS_PKCS7_SIGNER_INFO SignerInfos;
-} CMS_PKCS7_SIGNED_DATA, *PCMS_PKCS7_SIGNED_DATA;
-
-typedef struct _CMS_PKCS7_DER {
-    CMS_BLOB ContentTypeOid;
-    CMS_PKCS7_SIGNED_DATA SignedData;
-} CMS_PKCS7_DER, *PCMS_PKCS7_DER;
-
-FORCEINLINE
-PVOID
-CmsAllocatePoolZero (
-    _In_ SIZE_T NumberOfBytes
-)
-{
-    PVOID Pointer;
-
-    Pointer = ExAllocatePoolWithTag(NonPagedPool, NumberOfBytes, 'cms');
-
-    if (NULL != Pointer) {
-        RtlZeroBytes(Pointer, NumberOfBytes);
-    }
-
-    return Pointer;
-}
-
-FORCEINLINE
 VOID
-CmsFreePool (
-    _In_ PVOID Pointer
+CmsPkcs7InsertChain (
+    _Inout_ PCMS_CHAIN_HEADER Header,
+    _In_ PVOID Node
 )
 {
-    ExFreePoolWithTag(Pointer, 'cms');
-}
+    PCMS_CHAIN_HEADER Current;
 
-PVOID
-CmsPkcs7AllocateSet
-
-VOID
-CmsPkcs7FreeSet(
-    _Inout_ PCMS_SET_HEADER Header
-)
-{
-    PCMS_SET_HEADER Current;
-    PCMS_SET_HEADER Previous;
-
-    Previous = Header;
-
-    while (Previous->Next != NULL) {
-        Current = Previous->Next;
-
-
-    }
-
-
-
-    do {
-        Current = Current->Next;
-
-
-    } while (Current->Next != NULL);
+    Current = Header;
 
     while (Current->Next != NULL) {
-        Previous = Current;
         Current = Current->Next;
-
-        if (Previous != Header) {
-            CmsFreePool(Previous);
-        }
     }
 
-    Header->Next = NULL;
+    Current->Next = Node;
 }
 
-BOOLEAN
+PCMS_PKCS7_ATTRIBUTE_VALUE
 CmsPkcs7ParseAttributeValue (
     _In_ PUINT8 AttributeValueData,
-    _In_ SIZE_T AttributeValueLength,
-    _Out_ PCMS_PKCS7_ATTRIBUTE_VALUE AttributeValues
+    _In_ SIZE_T AttributeValueLength
+)
+{
+    PCMS_PKCS7_ATTRIBUTE_VALUE AttributeValue;
+
+    AttributeValue = CmsAllocatePoolZero(sizeof(CMS_PKCS7_ATTRIBUTE_VALUE));
+
+    if (NULL == AttributeValue) {
+        return NULL;
+    }
+
+    AttributeValue->Blob.Data = AttributeValueData;
+    AttributeValue->Blob.Length = AttributeValueLength;
+
+    return AttributeValue;
+}
+
+VOID
+CmsPkcs7FreeAttributeValues (
+    _In_ PCMS_PKCS7_ATTRIBUTE_VALUE AttributeValues
 )
 {
     PCMS_PKCS7_ATTRIBUTE_VALUE Current;
     PCMS_PKCS7_ATTRIBUTE_VALUE Previous;
 
+    if (NULL == AttributeValues) {
+        return;
+    }
+
     Current = AttributeValues;
-    Previous = NULL;
 
-    while (Current->Header.Valid != FALSE && Current->Header.Next != NULL) {
+    while (Current != NULL) {
         Previous = Current;
-        Current = CONTAINING_RECORD(Current->Header.Next,
-                                    CMS_PKCS7_ATTRIBUTE_VALUE,
-                                    Header);
+        Current = Current->Header.Next;
+
+        CmsFreePool(Previous);
     }
-
-    if (Current->Header.Valid != FALSE && Current->Header.Next == NULL) {
-        Current->Header.Next = CmsAllocatePoolZero(sizeof(CMS_PKCS7_ATTRIBUTE_VALUE));
-
-        if (Current->Header.Next == NULL) {
-            return FALSE;
-        }
-
-        Previous = Current;
-        Current = CONTAINING_RECORD(Current->Header.Next,
-                                    CMS_PKCS7_ATTRIBUTE_VALUE,
-                                    Header);
-    }
-
-    Current->Blob.Data = AttributeValueData;
-    Current->Blob.Length = AttributeValueLength;
-
-    Current->Header.Valid = TRUE;
-    return TRUE;
 }
 
-BOOLEAN
+PCMS_PKCS7_ATTRIBUTE
 CmsPkcs7ParseAttribute (
     _In_ PUINT8 AttributeData,
-    _In_ SIZE_T AttributeLength,
-    _Out_ PCMS_PKCS7_ATTRIBUTE Attributes
+    _In_ SIZE_T AttributeLength
 )
 {
-    INT32 Result;
+    INT Result;
     PUINT8 Pointer;
     PUINT8 AttributeEnd;
     PUINT8 AttributeValuesEnd;
     SIZE_T Length;
-    PCMS_PKCS7_ATTRIBUTE Current;
-    PCMS_PKCS7_ATTRIBUTE Previous;
+    PCMS_PKCS7_ATTRIBUTE Attribute;
+    PCMS_PKCS7_ATTRIBUTE_VALUE AttributeValue;
 
     Pointer = AttributeData;
     AttributeEnd = AttributeData + AttributeLength;
 
-    Current = Attributes;
-    Previous = NULL;
+    Attribute = CmsAllocatePoolZero(sizeof(CMS_PKCS7_ATTRIBUTE));
 
-    while (Current->Header.Valid != FALSE && Current->Header.Next != NULL) {
-        Previous = Current;
-        Current = CONTAINING_RECORD(Current->Header.Next,
-                                    CMS_PKCS7_ATTRIBUTE,
-                                    Header);
-    }
-
-    if (Current->Header.Valid != FALSE && Current->Header.Next == NULL) {
-        Current->Header.Next = CmsAllocatePoolZero(sizeof(CMS_PKCS7_ATTRIBUTE));
-
-        if (Current->Header.Next == NULL) {
-            return FALSE;
-        }
-
-        Previous = Current;
-        Current = CONTAINING_RECORD(Current->Header.Next,
-                                    CMS_PKCS7_ATTRIBUTE,
-                                    Header);
+    if (NULL == Attribute) {
+        goto Cleanup;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, AttributeEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
         goto Cleanup;
     }
 
-    Current->AttributeTypeOid.Data = Pointer;
-    Current->AttributeTypeOid.Length = Length;
+    Attribute->AttributeTypeOid.Data = Pointer;
+    Attribute->AttributeTypeOid.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, AttributeEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
@@ -1523,11 +1389,7 @@ CmsPkcs7ParseAttribute (
     AttributeValuesEnd = Pointer + Length;
 
     while (TRUE) {
-        if ((AttributeValuesEnd - Pointer) < 1) {
-            break;
-        }
-
-        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, *Pointer);
+        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
 
         if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
             break;
@@ -1537,74 +1399,85 @@ CmsPkcs7ParseAttribute (
             goto Cleanup;
         }
 
-        if (FALSE == CmsPkcs7ParseAttributeValue(Pointer, Length, &Current->Values)) {
-            break;
+        AttributeValue = CmsPkcs7ParseAttributeValue(Pointer, Length);
+
+        if (NULL == AttributeValue) {
+            goto Cleanup;
+        }
+
+        if (NULL == Attribute->Values) {
+            Attribute->Values = AttributeValue;
+        }
+        else {
+            CmsPkcs7InsertChain(&Attribute->Values->Header, AttributeValue);
         }
 
         Pointer += Length;
     }
 
-    Current->Header.Valid = TRUE;
-    return TRUE;
+    return Attribute;
 
 Cleanup:
-    if (Previous != NULL) {
-        Previous->Header.Next = NULL;
+
+    if (NULL != Attribute) {
+        CmsPkcs7FreeAttributeValues(Attribute->Values);
+        CmsFreePool(Attribute);
     }
 
-    if (Current != Attributes) {
-        CmsFreePool(Current);
-    }
-
-    return FALSE;
+    return NULL;
 }
 
-BOOLEAN
-CmsPkcs7ParseSignerInfo (
-    _In_ PUINT8 SignerInfoData,
-    _In_ SIZE_T SignerInfosLength,
-    _Out_ PCMS_PKCS7_SIGNER_INFO SignerInfos
+VOID
+CmsPkcs7FreeAttributes (
+    _In_ PCMS_PKCS7_ATTRIBUTE Attributes
 )
 {
-    INT32 Result;
+    PCMS_PKCS7_ATTRIBUTE Current;
+    PCMS_PKCS7_ATTRIBUTE Previous;
+
+    if (NULL == Attributes) {
+        return;
+    }
+
+    Current = Attributes;
+
+    while (Current != NULL) {
+        Previous = Current;
+        Current = Current->Header.Next;
+
+        CmsPkcs7FreeAttributeValues(Previous->Values);
+        CmsFreePool(Previous);
+    }
+}
+
+PCMS_PKCS7_SIGNER_INFO
+CmsPkcs7ParseSignerInfo (
+    _In_ PUINT8 SignerInfoData,
+    _In_ SIZE_T SignerInfosLength
+)
+{
+    INT Result;
     PUINT8 Pointer;
     PUINT8 SignerInfoEnd;
     PUINT8 UnsignedAttributesEnd;
     SIZE_T Length;
-    PCMS_PKCS7_SIGNER_INFO Current;
-    PCMS_PKCS7_SIGNER_INFO Previous;
+    PCMS_PKCS7_SIGNER_INFO SignerInfo;
+    PCMS_PKCS7_ATTRIBUTE Attribute;
 
     Pointer = SignerInfoData;
     SignerInfoEnd = SignerInfoData + SignerInfosLength;
 
-    Current = SignerInfos;
-    Previous = NULL;
+    SignerInfo = CmsAllocatePoolZero(sizeof(CMS_PKCS7_SIGNER_INFO));
 
-    while (Current->Header.Valid != FALSE && Current->Header.Next != NULL) {
-        Previous = Current;
-        Current = CONTAINING_RECORD(Current->Header.Next,
-                                    CMS_PKCS7_SIGNER_INFO,
-                                    Header);
-    }
-
-    if (Current->Header.Valid != FALSE && Current->Header.Next == NULL) {
-        Current->Header.Next = CmsAllocatePoolZero(sizeof(CMS_PKCS7_SIGNER_INFO));
-
-        if (Current->Header.Next == NULL) {
-            return FALSE;
-        }
-
-        Previous = Current;
-        Current = CONTAINING_RECORD(Current->Header.Next,
-                                    CMS_PKCS7_SIGNER_INFO,
-                                    Header);
-    }
-
-    if (mbedtls_asn1_get_int(&Pointer, SignerInfoEnd, &Current->Version) != 0) {
+    if (NULL == SignerInfo) {
         goto Cleanup;
     }
 
-    if (Current->Version != 1) {
+    if (mbedtls_asn1_get_int(&Pointer, SignerInfoEnd, &SignerInfo->Version) != 0) {
+        goto Cleanup;
+    }
+
+    if (SignerInfo->Version != 1) {
         goto Cleanup;
     }
 
@@ -1612,21 +1485,21 @@ CmsPkcs7ParseSignerInfo (
         goto Cleanup;
     }
 
-    Current->IssuerAndSerialNumber.Data = Pointer;
-    Current->IssuerAndSerialNumber.Length = Length;
+    SignerInfo->IssuerAndSerialNumber.Data = Pointer;
+    SignerInfo->IssuerAndSerialNumber.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
         goto Cleanup;
     }
 
-    Current->DigestAlgorithm.Data = Pointer;
-    Current->DigestAlgorithm.Length = Length;
+    SignerInfo->DigestAlgorithm.Data = Pointer;
+    SignerInfo->DigestAlgorithm.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
-        Current->SignedAttrs.Data = Pointer;
-        Current->SignedAttrs.Length = Length;
+        SignerInfo->SignedAttrs.Data = Pointer;
+        SignerInfo->SignedAttrs.Length = Length;
         Pointer += Length;
     }
 
@@ -1634,16 +1507,16 @@ CmsPkcs7ParseSignerInfo (
         goto Cleanup;
     }
 
-    Current->SignatureAlgorithm.Data = Pointer;
-    Current->SignatureAlgorithm.Length = Length;
+    SignerInfo->SignatureAlgorithm.Data = Pointer;
+    SignerInfo->SignatureAlgorithm.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_OCTET_STRING) != 0) {
         goto Cleanup;
     }
 
-    Current->Signature.Data = Pointer;
-    Current->Signature.Length = Length;
+    SignerInfo->Signature.Data = Pointer;
+    SignerInfo->Signature.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC | 1) == 0) {
@@ -1660,27 +1533,56 @@ CmsPkcs7ParseSignerInfo (
                 goto Cleanup;
             }
 
-            if (FALSE == CmsPkcs7ParseAttribute(Pointer, Length, &Current->UnsignedAttributes)) {
-                break;
+            Attribute = CmsPkcs7ParseAttribute(Pointer, Length);
+
+            if (NULL == Attribute) {
+                goto Cleanup;
+            }
+
+            if (NULL == SignerInfo->UnsignedAttributes) {
+                SignerInfo->UnsignedAttributes = Attribute;
+            }
+            else {
+                CmsPkcs7InsertChain(&SignerInfo->UnsignedAttributes->Header, Attribute);
             }
 
             Pointer += Length;
         }
     }
 
-    Current->Header.Valid = TRUE;
-    return TRUE;
+    return SignerInfo;
 
 Cleanup:
-    if (Previous != NULL) {
-        Previous->Header.Next = NULL;
+
+    if (NULL != SignerInfo) {
+        CmsPkcs7FreeAttributes(SignerInfo->UnsignedAttributes);
+        CmsFreePool(SignerInfo);
     }
 
-    if (Current != SignerInfos) {
-        CmsFreePool(Current);
+    return NULL;
+}
+
+VOID
+CmsPkcs7FreeSignerInfos (
+    _In_ PCMS_PKCS7_SIGNER_INFO SignerInfos
+)
+{
+    PCMS_PKCS7_SIGNER_INFO Current;
+    PCMS_PKCS7_SIGNER_INFO Previous;
+
+    if (NULL == SignerInfos) {
+        return;
     }
 
-    return FALSE;
+    Current = SignerInfos;
+
+    while (Current != NULL) {
+        Previous = Current;
+        Current = Current->Header.Next;
+
+        CmsPkcs7FreeAttributes(Previous->UnsignedAttributes);
+        CmsFreePool(Previous);
+    }
 }
 
 BOOLEAN
@@ -1690,6 +1592,7 @@ CmsPkcs7ParseDer (
     _Out_ PCMS_PKCS7_DER Pkcs7Der
 )
 {
+    INT Result;
     PUINT8 Buffer;
     PUINT8 Pointer;
     PUINT8 Pkcs7End;
@@ -1697,10 +1600,16 @@ CmsPkcs7ParseDer (
     PUINT8 ContentEnd;
     PUINT8 CertificatesEnd;
     PUINT8 SignerInfosEnd;
+    PCMS_PKCS7_SIGNER_INFO SignerInfos;
     SIZE_T Length;
 
     Pointer = Pkcs7Data;
     Pkcs7End = Pkcs7Data + Pkcs7Length;
+
+    memset(Pkcs7Der, 0, sizeof(CMS_PKCS7_DER));
+
+    mbedtls_x509_crt_init(&Pkcs7Der->SignedData.Certificates);
+    mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
 
     if (mbedtls_asn1_get_tag(&Pointer, Pkcs7End, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
         return FALSE;
@@ -1795,37 +1704,55 @@ CmsPkcs7ParseDer (
     SignerInfosEnd = Pointer + Length;
 
     while (TRUE) {
-        if (mbedtls_asn1_get_tag(&Pointer, SignerInfosEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Result = mbedtls_asn1_get_tag(&Pointer, SignerInfosEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+
+        if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
             break;
         }
 
-        if (FALSE == CmsPkcs7ParseSignerInfo(Pointer, Length, &Pkcs7Der->SignedData.SignerInfos)) {
-            break;
+        if (0 != Result) {
+            goto Cleanup;
+        }
+
+        SignerInfos = CmsPkcs7ParseSignerInfo(Pointer, Length);
+
+        if (NULL == SignerInfos) {
+            goto Cleanup;
+        }
+
+        if (NULL == Pkcs7Der->SignedData.SignerInfos) {
+            Pkcs7Der->SignedData.SignerInfos = SignerInfos;
+        }
+        else {
+            CmsPkcs7InsertChain(&Pkcs7Der->SignedData.SignerInfos->Header, SignerInfos);
         }
 
         Pointer += Length;
     }
 
     return TRUE;
+
+Cleanup:
+
+    mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
+    mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
+
+    CmsPkcs7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
+    Pkcs7Der->SignedData.SignerInfos = NULL;
+
+    return FALSE;
 }
 
 VOID
 CmsPkcs7FreeDer (
-    _In_ PCMS_PKCS7_DER Pkcs7Der
+    _Inout_ PCMS_PKCS7_DER Pkcs7Der
 )
 {
-
-}
-
-VOID
-CmsPkcs7InitializeDer (
-    _Out_ PCMS_PKCS7_DER Pkcs7Der
-)
-{
-    memset(Pkcs7Der, 0, sizeof(CMS_PKCS7_DER));
-
-    mbedtls_x509_crt_init(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
+    mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
+    mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
+    
+    CmsPkcs7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
+    Pkcs7Der->SignedData.SignerInfos = NULL;
 }
 
 VOID
@@ -1850,9 +1777,9 @@ DriverEntry (
 
     CMS_PKCS7_DER Pkcs7Der;
 
-    CmsPkcs7InitializeDer(&Pkcs7Der);
-    CmsPkcs7ParseDer(CertificateData, sizeof(CertificateData), &Pkcs7Der);
-    CmsPkcs7FreeDer(&Pkcs7Der);
+    if (FALSE != CmsPkcs7ParseDer(CertificateData, sizeof(CertificateData), &Pkcs7Der)) {
+        CmsPkcs7FreeDer(&Pkcs7Der);
+    }
     
     Status = STATUS_UNSUCCESSFUL;
 
