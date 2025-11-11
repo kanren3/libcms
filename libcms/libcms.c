@@ -1341,6 +1341,7 @@ CmsPkcs7ParseAttribute (
 )
 {
     INT Result;
+    PUINT8 Buffer;
     PUINT8 Pointer;
     PUINT8 AttributeEnd;
     PUINT8 AttributeValuesEnd;
@@ -1373,6 +1374,7 @@ CmsPkcs7ParseAttribute (
     AttributeValuesEnd = Pointer + Length;
 
     while (TRUE) {
+        Buffer = Pointer;
         Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
 
         if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
@@ -1383,7 +1385,7 @@ CmsPkcs7ParseAttribute (
             goto Cleanup;
         }
 
-        AttributeValue = CmsPkcs7ParseAttributeValue(Pointer, Length);
+        AttributeValue = CmsPkcs7ParseAttributeValue(Buffer, Pointer + Length - Buffer);
 
         if (NULL == AttributeValue) {
             goto Cleanup;
@@ -1666,12 +1668,21 @@ CmsPkcs7ParseDer (
 
         while (TRUE) {
             Buffer = Pointer;
-            if (mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+            Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+
+            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
                 break;
             }
+
+            if (0 != Result) {
+                goto Cleanup;
+            }
+
             Pointer += Length;
-            if (mbedtls_x509_crt_parse_der(&Pkcs7Der->SignedData.Certificates, Buffer, Pointer - Buffer) != 0) {
-                break;
+            Result = mbedtls_x509_crt_parse_der(&Pkcs7Der->SignedData.Certificates, Buffer, Pointer - Buffer);
+
+            if (0 != Result) {
+                goto Cleanup;
             }
         }
 
@@ -1683,12 +1694,21 @@ CmsPkcs7ParseDer (
 
         while (TRUE) {
             Buffer = Pointer;
-            if (mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+            Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+
+            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
                 break;
             }
+
+            if (0 != Result) {
+                goto Cleanup;
+            }
+
             Pointer += Length;
-            if (mbedtls_x509_crl_parse_der(&Pkcs7Der->SignedData.CertificateRevocationLists, Buffer, Pointer - Buffer) != 0) {
-                break;
+            Result = mbedtls_x509_crl_parse_der(&Pkcs7Der->SignedData.CertificateRevocationLists, Buffer, Pointer - Buffer);
+
+            if (0 != Result) {
+                goto Cleanup;
             }
         }
 
@@ -1754,7 +1774,7 @@ CmsPkcs7FreeDer (
 {
     mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
     mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
-    
+
     CmsPkcs7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
     Pkcs7Der->SignedData.SignerInfos = NULL;
 }
@@ -1768,6 +1788,59 @@ DriverUnload (
 
 }
 
+VOID
+Test(
+    _In_ PVOID Certificate,
+    _In_ SIZE_T CertificateSize,
+    SIZE_T Index
+)
+{
+    CMS_PKCS7_DER Pkcs7Der;
+    PCMS_PKCS7_ATTRIBUTE UnsignedAttribute;
+    PCMS_PKCS7_ATTRIBUTE_VALUE UnsignedAttributeValue;
+
+    if (FALSE != CmsPkcs7ParseDer(Certificate, CertificateSize, &Pkcs7Der)) {
+        mbedtls_x509_crt *CurrentCertificate = &Pkcs7Der.SignedData.Certificates;
+
+        do {
+            mbedtls_asn1_named_data *SubjectName = &CurrentCertificate->subject;
+
+            while (SubjectName->next != NULL) {
+                SubjectName = SubjectName->next;
+            }
+
+            ANSI_STRING SubjectNameString;
+            SubjectNameString.Buffer = SubjectName->val.p;
+            SubjectNameString.Length = (USHORT)SubjectName->val.len;
+            SubjectNameString.MaximumLength = SubjectNameString.Length;
+
+            for (SIZE_T j = 0; j < Index; j++) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
+            }
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "SubjectName:%Z\n", &SubjectNameString);
+
+            CurrentCertificate = CurrentCertificate->next;
+        } while (CurrentCertificate != NULL);
+
+        UnsignedAttribute = Pkcs7Der.SignedData.SignerInfos->UnsignedAttributes;
+
+        while (NULL != UnsignedAttribute) {
+            UnsignedAttributeValue = UnsignedAttribute->Values;
+
+            while (NULL != UnsignedAttributeValue) {
+
+                Test(UnsignedAttributeValue->Blob.Data, UnsignedAttributeValue->Blob.Length, Index + 1);
+
+                UnsignedAttributeValue = UnsignedAttributeValue->Next;
+            }
+
+            UnsignedAttribute = UnsignedAttribute->Next;
+        }
+
+        CmsPkcs7FreeDer(&Pkcs7Der);
+    }
+}
+
 NTSTATUS
 NTAPI
 DriverEntry (
@@ -1779,16 +1852,18 @@ DriverEntry (
 
     DriverObject->DriverUnload = DriverUnload;
 
-    CMS_PKCS7_DER Pkcs7Der;
+    Test(CertificateData, sizeof(CertificateData), 0);
 
-    if (FALSE != CmsPkcs7ParseDer(CertificateData, sizeof(CertificateData), &Pkcs7Der)) {
-        __debugbreak();
-        CmsPkcs7FreeDer(&Pkcs7Der);
-    }
-    else {
-        __debugbreak();
-    }
-    
+    // CMS_PKCS7_DER Pkcs7Der;
+    // 
+    // if (FALSE != CmsPkcs7ParseDer(CertificateData, sizeof(CertificateData), &Pkcs7Der)) {
+    //     __debugbreak();
+    //     CmsPkcs7FreeDer(&Pkcs7Der);
+    // }
+    // else {
+    //     __debugbreak();
+    // }
+
     Status = STATUS_UNSUCCESSFUL;
 
     return Status;
