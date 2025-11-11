@@ -1321,15 +1321,31 @@ typedef struct _CMS_BLOB {
     SIZE_T Length;
 } CMS_BLOB, *PCMS_BLOB;
 
+typedef struct _CMS_SET_HEADER {
+    BOOLEAN Valid;
+    struct _CMS_SET_HEADER* Next;
+} CMS_SET_HEADER, *PCMS_SET_HEADER;
+
+typedef struct _CMS_PKCS7_ATTRIBUTE_VALUE {
+    CMS_SET_HEADER Header;
+    CMS_BLOB Blob;
+} CMS_PKCS7_ATTRIBUTE_VALUE, *PCMS_PKCS7_ATTRIBUTE_VALUE;
+
+typedef struct _CMS_PKCS7_ATTRIBUTE {
+    CMS_SET_HEADER Header;
+    CMS_BLOB AttributeTypeOid;
+    CMS_PKCS7_ATTRIBUTE_VALUE Values;
+} CMS_PKCS7_ATTRIBUTE, *PCMS_PKCS7_ATTRIBUTE;
+
 typedef struct _CMS_PKCS7_SIGNER_INFO {
+    CMS_SET_HEADER Header;
     INT32 Version;
     CMS_BLOB IssuerAndSerialNumber;
     CMS_BLOB DigestAlgorithm;
     CMS_BLOB SignedAttrs;
     CMS_BLOB SignatureAlgorithm;
     CMS_BLOB Signature;
-    CMS_BLOB UnsignedAttrs;
-    struct _CMS_PKCS7_SIGNER_INFO* Next;
+    CMS_PKCS7_ATTRIBUTE UnsignedAttributes;
 } CMS_PKCS7_SIGNER_INFO, *PCMS_PKCS7_SIGNER_INFO;
 
 typedef struct _CMS_PKCS7_SIGNED_DATA {
@@ -1346,6 +1362,203 @@ typedef struct _CMS_PKCS7_DER {
     CMS_PKCS7_SIGNED_DATA SignedData;
 } CMS_PKCS7_DER, *PCMS_PKCS7_DER;
 
+FORCEINLINE
+PVOID
+CmsAllocatePoolZero (
+    _In_ SIZE_T NumberOfBytes
+)
+{
+    PVOID Pointer;
+
+    Pointer = ExAllocatePoolWithTag(NonPagedPool, NumberOfBytes, 'cms');
+
+    if (NULL != Pointer) {
+        RtlZeroBytes(Pointer, NumberOfBytes);
+    }
+
+    return Pointer;
+}
+
+FORCEINLINE
+VOID
+CmsFreePool (
+    _In_ PVOID Pointer
+)
+{
+    ExFreePoolWithTag(Pointer, 'cms');
+}
+
+PVOID
+CmsPkcs7AllocateSet
+
+VOID
+CmsPkcs7FreeSet(
+    _Inout_ PCMS_SET_HEADER Header
+)
+{
+    PCMS_SET_HEADER Current;
+    PCMS_SET_HEADER Previous;
+
+    Previous = Header;
+
+    while (Previous->Next != NULL) {
+        Current = Previous->Next;
+
+
+    }
+
+
+
+    do {
+        Current = Current->Next;
+
+
+    } while (Current->Next != NULL);
+
+    while (Current->Next != NULL) {
+        Previous = Current;
+        Current = Current->Next;
+
+        if (Previous != Header) {
+            CmsFreePool(Previous);
+        }
+    }
+
+    Header->Next = NULL;
+}
+
+BOOLEAN
+CmsPkcs7ParseAttributeValue (
+    _In_ PUINT8 AttributeValueData,
+    _In_ SIZE_T AttributeValueLength,
+    _Out_ PCMS_PKCS7_ATTRIBUTE_VALUE AttributeValues
+)
+{
+    PCMS_PKCS7_ATTRIBUTE_VALUE Current;
+    PCMS_PKCS7_ATTRIBUTE_VALUE Previous;
+
+    Current = AttributeValues;
+    Previous = NULL;
+
+    while (Current->Header.Valid != FALSE && Current->Header.Next != NULL) {
+        Previous = Current;
+        Current = CONTAINING_RECORD(Current->Header.Next,
+                                    CMS_PKCS7_ATTRIBUTE_VALUE,
+                                    Header);
+    }
+
+    if (Current->Header.Valid != FALSE && Current->Header.Next == NULL) {
+        Current->Header.Next = CmsAllocatePoolZero(sizeof(CMS_PKCS7_ATTRIBUTE_VALUE));
+
+        if (Current->Header.Next == NULL) {
+            return FALSE;
+        }
+
+        Previous = Current;
+        Current = CONTAINING_RECORD(Current->Header.Next,
+                                    CMS_PKCS7_ATTRIBUTE_VALUE,
+                                    Header);
+    }
+
+    Current->Blob.Data = AttributeValueData;
+    Current->Blob.Length = AttributeValueLength;
+
+    Current->Header.Valid = TRUE;
+    return TRUE;
+}
+
+BOOLEAN
+CmsPkcs7ParseAttribute (
+    _In_ PUINT8 AttributeData,
+    _In_ SIZE_T AttributeLength,
+    _Out_ PCMS_PKCS7_ATTRIBUTE Attributes
+)
+{
+    INT32 Result;
+    PUINT8 Pointer;
+    PUINT8 AttributeEnd;
+    PUINT8 AttributeValuesEnd;
+    SIZE_T Length;
+    PCMS_PKCS7_ATTRIBUTE Current;
+    PCMS_PKCS7_ATTRIBUTE Previous;
+
+    Pointer = AttributeData;
+    AttributeEnd = AttributeData + AttributeLength;
+
+    Current = Attributes;
+    Previous = NULL;
+
+    while (Current->Header.Valid != FALSE && Current->Header.Next != NULL) {
+        Previous = Current;
+        Current = CONTAINING_RECORD(Current->Header.Next,
+                                    CMS_PKCS7_ATTRIBUTE,
+                                    Header);
+    }
+
+    if (Current->Header.Valid != FALSE && Current->Header.Next == NULL) {
+        Current->Header.Next = CmsAllocatePoolZero(sizeof(CMS_PKCS7_ATTRIBUTE));
+
+        if (Current->Header.Next == NULL) {
+            return FALSE;
+        }
+
+        Previous = Current;
+        Current = CONTAINING_RECORD(Current->Header.Next,
+                                    CMS_PKCS7_ATTRIBUTE,
+                                    Header);
+    }
+
+    if (mbedtls_asn1_get_tag(&Pointer, AttributeEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
+        goto Cleanup;
+    }
+
+    Current->AttributeTypeOid.Data = Pointer;
+    Current->AttributeTypeOid.Length = Length;
+    Pointer += Length;
+
+    if (mbedtls_asn1_get_tag(&Pointer, AttributeEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
+        goto Cleanup;
+    }
+
+    AttributeValuesEnd = Pointer + Length;
+
+    while (TRUE) {
+        if ((AttributeValuesEnd - Pointer) < 1) {
+            break;
+        }
+
+        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, *Pointer);
+
+        if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
+            break;
+        }
+
+        if (0 != Result) {
+            goto Cleanup;
+        }
+
+        if (FALSE == CmsPkcs7ParseAttributeValue(Pointer, Length, &Current->Values)) {
+            break;
+        }
+
+        Pointer += Length;
+    }
+
+    Current->Header.Valid = TRUE;
+    return TRUE;
+
+Cleanup:
+    if (Previous != NULL) {
+        Previous->Header.Next = NULL;
+    }
+
+    if (Current != Attributes) {
+        CmsFreePool(Current);
+    }
+
+    return FALSE;
+}
+
 BOOLEAN
 CmsPkcs7ParseSignerInfo (
     _In_ PUINT8 SignerInfoData,
@@ -1353,8 +1566,10 @@ CmsPkcs7ParseSignerInfo (
     _Out_ PCMS_PKCS7_SIGNER_INFO SignerInfos
 )
 {
+    INT32 Result;
     PUINT8 Pointer;
     PUINT8 SignerInfoEnd;
+    PUINT8 UnsignedAttributesEnd;
     SIZE_T Length;
     PCMS_PKCS7_SIGNER_INFO Current;
     PCMS_PKCS7_SIGNER_INFO Previous;
@@ -1365,21 +1580,24 @@ CmsPkcs7ParseSignerInfo (
     Current = SignerInfos;
     Previous = NULL;
 
-    while (Current->Version != 0 && Current->Next != NULL) {
+    while (Current->Header.Valid != FALSE && Current->Header.Next != NULL) {
         Previous = Current;
-        Current = Current->Next;
+        Current = CONTAINING_RECORD(Current->Header.Next,
+                                    CMS_PKCS7_SIGNER_INFO,
+                                    Header);
     }
 
-    if (Current->Version != 0 && Current->Next == NULL) {
-        Current->Next = ExAllocatePoolWithTag(PagedPool, sizeof(CMS_PKCS7_SIGNER_INFO), 'cms');
+    if (Current->Header.Valid != FALSE && Current->Header.Next == NULL) {
+        Current->Header.Next = CmsAllocatePoolZero(sizeof(CMS_PKCS7_SIGNER_INFO));
 
-        if (Current->Next == NULL) {
+        if (Current->Header.Next == NULL) {
             return FALSE;
         }
 
         Previous = Current;
-        Current = Current->Next;
-        memset(Current, 0, sizeof(CMS_PKCS7_SIGNER_INFO));
+        Current = CONTAINING_RECORD(Current->Header.Next,
+                                    CMS_PKCS7_SIGNER_INFO,
+                                    Header);
     }
 
     if (mbedtls_asn1_get_int(&Pointer, SignerInfoEnd, &Current->Version) != 0) {
@@ -1429,29 +1647,40 @@ CmsPkcs7ParseSignerInfo (
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC | 1) == 0) {
-        Current->UnsignedAttrs.Data = Pointer;
-        Current->UnsignedAttrs.Length = Length;
+        UnsignedAttributesEnd = Pointer + Length;
+
+        while (TRUE) {
+            Result = mbedtls_asn1_get_tag(&Pointer, UnsignedAttributesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+
+            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
+                break;
+            }
+
+            if (0 != Result) {
+                goto Cleanup;
+            }
+
+            if (FALSE == CmsPkcs7ParseAttribute(Pointer, Length, &Current->UnsignedAttributes)) {
+                break;
+            }
+
+            Pointer += Length;
+        }
     }
+
+    Current->Header.Valid = TRUE;
+    return TRUE;
 
 Cleanup:
     if (Previous != NULL) {
-        Previous->Next = NULL;
+        Previous->Header.Next = NULL;
     }
 
     if (Current != SignerInfos) {
-        ExFreePoolWithTag(Current, 'cms');
+        CmsFreePool(Current);
     }
 
     return FALSE;
-}
-
-VOID
-CmsPkcs7FreeDer (
-    _In_ PCMS_PKCS7_DER Pkcs7Der
-)
-{
-    mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
 }
 
 BOOLEAN
@@ -1461,10 +1690,10 @@ CmsPkcs7ParseDer (
     _Out_ PCMS_PKCS7_DER Pkcs7Der
 )
 {
-    INT Result;
     PUINT8 Buffer;
     PUINT8 Pointer;
     PUINT8 Pkcs7End;
+    PUINT8 ContentInfoEnd;
     PUINT8 ContentEnd;
     PUINT8 CertificatesEnd;
     PUINT8 SignerInfosEnd;
@@ -1473,51 +1702,44 @@ CmsPkcs7ParseDer (
     Pointer = Pkcs7Data;
     Pkcs7End = Pkcs7Data + Pkcs7Length;
 
-    mbedtls_x509_crt_init(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
-
-    memset(&Pkcs7Der->SignedData.SignerInfos, 0, sizeof(CMS_PKCS7_SIGNER_INFO));
-
-    if ((Pointer[4] != MBEDTLS_ASN1_OID) || (Pointer[5] != sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1)) {
-        goto Cleanup;
-    }
-
-    if (memcmp(Pointer + 6, MBEDTLS_OID_PKCS7_SIGNED_DATA, sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) != 0) {
-        goto Cleanup;
-    }
-
-    if ((Pointer[15] != (MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC)) || (Pointer[16] != 0x82)) {
-        goto Cleanup;
-    }
-
     if (mbedtls_asn1_get_tag(&Pointer, Pkcs7End, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-        goto Cleanup;
+        return FALSE;
     }
 
-    if (mbedtls_asn1_get_tag(&Pointer, Pkcs7End, &Length, MBEDTLS_ASN1_OID) != 0) {
-        goto Cleanup;
+    ContentInfoEnd = Pointer + Length;
+
+    if (mbedtls_asn1_get_tag(&Pointer, ContentInfoEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
+        return FALSE;
+    }
+
+    if (Length != sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) {
+        return FALSE;
+    }
+
+    if (memcmp(Pointer, MBEDTLS_OID_PKCS7_SIGNED_DATA, sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) != 0) {
+        return FALSE;
     }
 
     Pkcs7Der->ContentTypeOid.Data = Pointer;
     Pkcs7Der->ContentTypeOid.Length = Length;
     Pointer += Length;
 
-    if (mbedtls_asn1_get_tag(&Pointer, Pkcs7End, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) != 0) {
-        goto Cleanup;
+    if (mbedtls_asn1_get_tag(&Pointer, ContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) != 0) {
+        return FALSE;
     }
 
     ContentEnd = Pointer + Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-        goto Cleanup;
+        return FALSE;
     }
 
     if (mbedtls_asn1_get_int(&Pointer, ContentEnd, &Pkcs7Der->SignedData.Version) != 0) {
-        goto Cleanup;
+        return FALSE;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
-        goto Cleanup;
+        return FALSE;
     }
 
     Pkcs7Der->SignedData.DigestAlgorithms.Data = Pointer;
@@ -1525,7 +1747,7 @@ CmsPkcs7ParseDer (
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-        goto Cleanup;
+        return FALSE;
     }
 
     Pkcs7Der->SignedData.EncapContentInfo.Data = Pointer;
@@ -1541,7 +1763,7 @@ CmsPkcs7ParseDer (
                 break;
             }
             Pointer += Length;
-            if (mbedtls_x509_crt_parse_der(&Pkcs7Der->SignedData.Certificates, Buffer, CertificatesEnd - Buffer) != 0) {
+            if (mbedtls_x509_crt_parse_der(&Pkcs7Der->SignedData.Certificates, Buffer, Pointer - Buffer) != 0) {
                 break;
             }
         }
@@ -1558,7 +1780,7 @@ CmsPkcs7ParseDer (
                 break;
             }
             Pointer += Length;
-            if (mbedtls_x509_crl_parse_der(&Pkcs7Der->SignedData.CertificateRevocationLists, Buffer, CertificatesEnd - Buffer) != 0) {
+            if (mbedtls_x509_crl_parse_der(&Pkcs7Der->SignedData.CertificateRevocationLists, Buffer, Pointer - Buffer) != 0) {
                 break;
             }
         }
@@ -1567,7 +1789,7 @@ CmsPkcs7ParseDer (
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
-        goto Cleanup;
+        return FALSE;
     }
 
     SignerInfosEnd = Pointer + Length;
@@ -1583,13 +1805,27 @@ CmsPkcs7ParseDer (
 
         Pointer += Length;
     }
-    
-    return TRUE;
 
-Cleanup:
-    mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
-    return FALSE;
+    return TRUE;
+}
+
+VOID
+CmsPkcs7FreeDer (
+    _In_ PCMS_PKCS7_DER Pkcs7Der
+)
+{
+
+}
+
+VOID
+CmsPkcs7InitializeDer (
+    _Out_ PCMS_PKCS7_DER Pkcs7Der
+)
+{
+    memset(Pkcs7Der, 0, sizeof(CMS_PKCS7_DER));
+
+    mbedtls_x509_crt_init(&Pkcs7Der->SignedData.Certificates);
+    mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
 }
 
 VOID
@@ -1612,13 +1848,12 @@ DriverEntry (
 
     DriverObject->DriverUnload = DriverUnload;
 
-    __debugbreak();
-
     CMS_PKCS7_DER Pkcs7Der;
+
+    CmsPkcs7InitializeDer(&Pkcs7Der);
     CmsPkcs7ParseDer(CertificateData, sizeof(CertificateData), &Pkcs7Der);
-
     CmsPkcs7FreeDer(&Pkcs7Der);
-
+    
     Status = STATUS_UNSUCCESSFUL;
 
     return Status;
