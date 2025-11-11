@@ -22,23 +22,19 @@ typedef struct _CMS_BLOB {
     SIZE_T Length;
 } CMS_BLOB, *PCMS_BLOB;
 
-typedef struct _CMS_CHAIN_HEADER {
-    PVOID Next;
-} CMS_CHAIN_HEADER, *PCMS_CHAIN_HEADER;
-
 typedef struct _CMS_PKCS7_ATTRIBUTE_VALUE {
-    CMS_CHAIN_HEADER Header;
+    struct _CMS_PKCS7_ATTRIBUTE_VALUE *Next;
     CMS_BLOB Blob;
 } CMS_PKCS7_ATTRIBUTE_VALUE, *PCMS_PKCS7_ATTRIBUTE_VALUE;
 
 typedef struct _CMS_PKCS7_ATTRIBUTE {
-    CMS_CHAIN_HEADER Header;
+    struct _CMS_PKCS7_ATTRIBUTE *Next;
     CMS_BLOB AttributeTypeOid;
     PCMS_PKCS7_ATTRIBUTE_VALUE Values;
 } CMS_PKCS7_ATTRIBUTE, *PCMS_PKCS7_ATTRIBUTE;
 
 typedef struct _CMS_PKCS7_SIGNER_INFO {
-    CMS_CHAIN_HEADER Header;
+    struct _CMS_PKCS7_SIGNER_INFO *Next;
     INT Version;
     CMS_BLOB IssuerAndSerialNumber;
     CMS_BLOB DigestAlgorithm;

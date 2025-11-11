@@ -1292,23 +1292,6 @@ UINT8 CertificateData[20480] = {
     0x4D, 0x06, 0x01, 0x47, 0x86, 0x2E, 0xDF, 0xB3, 0x6B, 0x49, 0x11, 0x31, 0x26, 0x92, 0x6F, 0x00
 };
 
-VOID
-CmsPkcs7InsertChain (
-    _Inout_ PCMS_CHAIN_HEADER Header,
-    _In_ PVOID Node
-)
-{
-    PCMS_CHAIN_HEADER Current;
-
-    Current = Header;
-
-    while (Current->Next != NULL) {
-        Current = Current->Next;
-    }
-
-    Current->Next = Node;
-}
-
 PCMS_PKCS7_ATTRIBUTE_VALUE
 CmsPkcs7ParseAttributeValue (
     _In_ PUINT8 AttributeValueData,
@@ -1345,7 +1328,7 @@ CmsPkcs7FreeAttributeValues (
 
     while (Current != NULL) {
         Previous = Current;
-        Current = Current->Header.Next;
+        Current = Current->Next;
 
         CmsFreePool(Previous);
     }
@@ -1364,6 +1347,7 @@ CmsPkcs7ParseAttribute (
     SIZE_T Length;
     PCMS_PKCS7_ATTRIBUTE Attribute;
     PCMS_PKCS7_ATTRIBUTE_VALUE AttributeValue;
+    PCMS_PKCS7_ATTRIBUTE_VALUE Node;
 
     Pointer = AttributeData;
     AttributeEnd = AttributeData + AttributeLength;
@@ -1409,7 +1393,13 @@ CmsPkcs7ParseAttribute (
             Attribute->Values = AttributeValue;
         }
         else {
-            CmsPkcs7InsertChain(&Attribute->Values->Header, AttributeValue);
+            Node = Attribute->Values;
+
+            while (Node->Next != NULL) {
+                Node = Node->Next;
+            }
+
+            Node->Next = AttributeValue;
         }
 
         Pointer += Length;
@@ -1443,7 +1433,7 @@ CmsPkcs7FreeAttributes (
 
     while (Current != NULL) {
         Previous = Current;
-        Current = Current->Header.Next;
+        Current = Current->Next;
 
         CmsPkcs7FreeAttributeValues(Previous->Values);
         CmsFreePool(Previous);
@@ -1463,6 +1453,7 @@ CmsPkcs7ParseSignerInfo (
     SIZE_T Length;
     PCMS_PKCS7_SIGNER_INFO SignerInfo;
     PCMS_PKCS7_ATTRIBUTE Attribute;
+    PCMS_PKCS7_ATTRIBUTE Node;
 
     Pointer = SignerInfoData;
     SignerInfoEnd = SignerInfoData + SignerInfosLength;
@@ -1543,7 +1534,13 @@ CmsPkcs7ParseSignerInfo (
                 SignerInfo->UnsignedAttributes = Attribute;
             }
             else {
-                CmsPkcs7InsertChain(&SignerInfo->UnsignedAttributes->Header, Attribute);
+                Node = SignerInfo->UnsignedAttributes;
+
+                while (Node->Next != NULL) {
+                    Node = Node->Next;
+                }
+
+                Node->Next = Attribute;
             }
 
             Pointer += Length;
@@ -1578,7 +1575,7 @@ CmsPkcs7FreeSignerInfos (
 
     while (Current != NULL) {
         Previous = Current;
-        Current = Current->Header.Next;
+        Current = Current->Next;
 
         CmsPkcs7FreeAttributes(Previous->UnsignedAttributes);
         CmsFreePool(Previous);
@@ -1601,6 +1598,7 @@ CmsPkcs7ParseDer (
     PUINT8 CertificatesEnd;
     PUINT8 SignerInfosEnd;
     PCMS_PKCS7_SIGNER_INFO SignerInfos;
+    PCMS_PKCS7_SIGNER_INFO Node;
     SIZE_T Length;
 
     Pointer = Pkcs7Data;
@@ -1724,7 +1722,13 @@ CmsPkcs7ParseDer (
             Pkcs7Der->SignedData.SignerInfos = SignerInfos;
         }
         else {
-            CmsPkcs7InsertChain(&Pkcs7Der->SignedData.SignerInfos->Header, SignerInfos);
+            Node = Pkcs7Der->SignedData.SignerInfos;
+
+            while (Node->Next != NULL) {
+                Node = Node->Next;
+            }
+
+            Node->Next = SignerInfos;
         }
 
         Pointer += Length;
@@ -1778,7 +1782,11 @@ DriverEntry (
     CMS_PKCS7_DER Pkcs7Der;
 
     if (FALSE != CmsPkcs7ParseDer(CertificateData, sizeof(CertificateData), &Pkcs7Der)) {
+        __debugbreak();
         CmsPkcs7FreeDer(&Pkcs7Der);
+    }
+    else {
+        __debugbreak();
     }
     
     Status = STATUS_UNSUCCESSFUL;
