@@ -8,6 +8,8 @@
 #include <mbedtls/asn1.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/x509_crl.h>
+#include <mbedtls/sha1.h>
+#include <mbedtls/sha256.h>
 #include "libcms.h"
 
 PCMS_PKCS7_ATTRIBUTE_VALUE
@@ -682,6 +684,73 @@ PrintCertificate (
         }
 
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+    }
+
+    // Certificate Thumbprint (SHA-256 hash of entire certificate)
+    {
+        UCHAR Thumbprint[20];
+        INT Result;
+
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Certificate Thumbprint (SHA-1)]\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
+
+        Result = mbedtls_sha1(Certificate->raw.p, Certificate->raw.len, Thumbprint);
+
+        if (Result == 0) {
+            for (SIZE_T i = 0; i < sizeof(Thumbprint); i++) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", Thumbprint[i]);
+                if (i < sizeof(Thumbprint) - 1) {
+                    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
+                }
+            }
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
+        } else {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Failed to compute (error: %d)\n\n", Result);
+        }
+    }
+
+    if (Certificate->sig_md == MBEDTLS_MD_SHA1) {
+        UCHAR TbsHash[20];
+        INT Result;
+
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[ToBeSignedHash (SHA-1)]\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
+
+        Result = mbedtls_sha1(Certificate->tbs.p, Certificate->tbs.len, TbsHash);
+
+        if (Result == 0) {
+            for (SIZE_T i = 0; i < sizeof(TbsHash); i++) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", TbsHash[i]);
+                if (i < sizeof(TbsHash) - 1) {
+                    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
+                }
+            }
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
+        } else {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Failed to compute (error: %d)\n\n", Result);
+        }
+    }
+
+    if (Certificate->sig_md == MBEDTLS_MD_SHA256) {
+        UCHAR TbsHash[32];
+        INT Result;
+
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[ToBeSignedHash (SHA-256)]\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
+
+        Result = mbedtls_sha256(Certificate->tbs.p, Certificate->tbs.len, TbsHash, 0);
+
+        if (Result == 0) {
+            for (SIZE_T i = 0; i < sizeof(TbsHash); i++) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", TbsHash[i]);
+                if (i < sizeof(TbsHash) - 1) {
+                    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
+                }
+            }
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
+        } else {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Failed to compute (error: %d)\n\n", Result);
+        }
     }
 
     DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n\n");
