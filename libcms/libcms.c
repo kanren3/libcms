@@ -1,3 +1,4 @@
+#include <mbedtls/mbedtls_config.h>
 #include <ntifs.h>
 #include <windef.h>
 #include <ntstrsafe.h>
@@ -501,18 +502,189 @@ PrintCertificate (
     _In_ PCMS_PKCS7_CERTIFICATE_SET Certificate
 )
 {
-    mbedtls_asn1_named_data *SubjectName = &Certificate->subject;
+    ANSI_STRING AnsiString;
+    mbedtls_asn1_named_data *NameData;
+    CHAR OidBuffer[128];
+    const CHAR *Description;
+    mbedtls_pk_type_t PkType;
 
-    while (SubjectName->next != NULL) {
-        SubjectName = SubjectName->next;
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "    Certificate Information\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n\n");
+
+    // Version
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Version]\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  v%d (0x%x)\n\n", Certificate->version, Certificate->version);
+
+    // Serial Number
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Serial Number]\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
+    for (SIZE_T i = 0; i < Certificate->serial.len; i++) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", Certificate->serial.p[i]);
+        if (i < Certificate->serial.len - 1) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, ":");
+        }
+    }
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
+
+    // Issuer
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Issuer]\n");
+    NameData = &Certificate->issuer;
+    while (NameData != NULL) {
+        if (NameData->oid.len > 0) {
+            if (mbedtls_oid_get_attr_short_name(&NameData->oid, &Description) == 0) {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "%s", Description);
+            } else {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "Unknown");
+            }
+
+            AnsiString.Buffer = (PCHAR)NameData->val.p;
+            AnsiString.Length = (USHORT)NameData->val.len;
+            AnsiString.MaximumLength = AnsiString.Length;
+
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  %-20s = %Z\n", OidBuffer, &AnsiString);
+        }
+        NameData = NameData->next;
+    }
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+
+    // Subject
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Subject]\n");
+    NameData = &Certificate->subject;
+    while (NameData != NULL) {
+        if (NameData->oid.len > 0) {
+            if (mbedtls_oid_get_attr_short_name(&NameData->oid, &Description) == 0) {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "%s", Description);
+            } else {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "Unknown");
+            }
+
+            AnsiString.Buffer = (PCHAR)NameData->val.p;
+            AnsiString.Length = (USHORT)NameData->val.len;
+            AnsiString.MaximumLength = AnsiString.Length;
+
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  %-20s = %Z\n", OidBuffer, &AnsiString);
+        }
+        NameData = NameData->next;
+    }
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+
+    // Validity Period
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Validity]\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
+               "  Not Before          : %04d-%02d-%02d %02d:%02d:%02d UTC\n",
+               Certificate->valid_from.year, Certificate->valid_from.mon, Certificate->valid_from.day,
+               Certificate->valid_from.hour, Certificate->valid_from.min, Certificate->valid_from.sec);
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
+               "  Not After           : %04d-%02d-%02d %02d:%02d:%02d UTC\n\n",
+               Certificate->valid_to.year, Certificate->valid_to.mon, Certificate->valid_to.day,
+               Certificate->valid_to.hour, Certificate->valid_to.min, Certificate->valid_to.sec);
+
+    // Signature Algorithm
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Signature Algorithm]\n");
+    if (mbedtls_oid_get_sig_alg_desc(&Certificate->sig_oid, &Description) == 0) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  %s\n\n", Description);
+    } else {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Unknown\n\n");
     }
 
-    ANSI_STRING SubjectNameString;
-    SubjectNameString.Buffer = SubjectName->val.p;
-    SubjectNameString.Length = (USHORT)SubjectName->val.len;
-    SubjectNameString.MaximumLength = SubjectNameString.Length;
+    // Public Key Info
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Public Key Info]\n");
+    PkType = mbedtls_pk_get_type(&Certificate->pk);
 
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "SubjectName:%Z\n", &SubjectNameString);
+    switch (PkType) {
+    case MBEDTLS_PK_RSA:
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : RSA\n");
+        break;
+    case MBEDTLS_PK_ECKEY:
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : EC\n");
+        break;
+    case MBEDTLS_PK_ECDSA:
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : ECDSA\n");
+        break;
+    default:
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : Unknown (%d)\n", PkType);
+        break;
+    }
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Key Size            : %d bits\n\n", 
+               mbedtls_pk_get_bitlen(&Certificate->pk));
+
+    // Extensions
+    if (Certificate->ext_types != 0) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Extensions]\n");
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_BASIC_CONSTRAINTS) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
+                       "  Basic Constraints   : CA = %s", 
+                       Certificate->ca_istrue ? "TRUE" : "FALSE");
+            if (Certificate->ca_istrue && Certificate->max_pathlen > 0) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
+                           ", pathlen = %d", Certificate->max_pathlen);
+            }
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_KEY_USAGE) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Key Usage           : ");
+
+            BOOLEAN FirstUsage = TRUE;
+            if (Certificate->key_usage & MBEDTLS_X509_KU_DIGITAL_SIGNATURE) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Digital Signature");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_NON_REPUDIATION) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sNon Repudiation", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_ENCIPHERMENT) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sKey Encipherment", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_DATA_ENCIPHERMENT) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sData Encipherment", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_AGREEMENT) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sKey Agreement", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_CERT_SIGN) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sCertificate Sign", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_CRL_SIGN) {
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sCRL Sign", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_SUBJECT_ALT_NAME) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Subject Alt Name    : Present\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_NS_CERT_TYPE) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Netscape Cert Type  : 0x%02X\n", Certificate->ns_cert_type);
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Extended Key Usage  : Present\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Subject Key ID      : Present\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER) {
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Authority Key ID    : Present\n");
+        }
+
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
+    }
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n\n");
 }
 
 VOID
