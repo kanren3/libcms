@@ -95,7 +95,7 @@ CmsPkcs7ParseAttribute (
 
     while (TRUE) {
         Buffer = Pointer;
-        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, Buffer[0]);
 
         if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
             break;
@@ -171,6 +171,7 @@ CmsPkcs7ParseSignerInfo (
     INT Result;
     PUINT8 Pointer;
     PUINT8 SignerInfoEnd;
+    PUINT8 SignedAttributesEnd;
     PUINT8 UnsignedAttributesEnd;
     SIZE_T Length;
     PCMS_PKCS7_SIGNER_INFO SignerInfo;
@@ -211,9 +212,40 @@ CmsPkcs7ParseSignerInfo (
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
-        SignerInfo->SignedAttrs.Data = Pointer;
-        SignerInfo->SignedAttrs.Length = Length;
-        Pointer += Length;
+        SignedAttributesEnd = Pointer + Length;
+
+        while (TRUE) {
+            Result = mbedtls_asn1_get_tag(&Pointer, SignedAttributesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+
+            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
+                break;
+            }
+
+            if (0 != Result) {
+                goto Cleanup;
+            }
+
+            Attribute = CmsPkcs7ParseAttribute(Pointer, Length);
+
+            if (NULL == Attribute) {
+                goto Cleanup;
+            }
+
+            if (NULL == SignerInfo->SignedAttributes) {
+                SignerInfo->SignedAttributes = Attribute;
+            }
+            else {
+                Node = SignerInfo->SignedAttributes;
+
+                while (Node->Next != NULL) {
+                    Node = Node->Next;
+                }
+
+                Node->Next = Attribute;
+            }
+
+            Pointer += Length;
+        }
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
@@ -405,8 +437,6 @@ CmsPkcs7ParseDer (
                 goto Cleanup;
             }
         }
-
-        Pointer = CertificatesEnd;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC | 1) == 0) {
@@ -431,8 +461,6 @@ CmsPkcs7ParseDer (
                 goto Cleanup;
             }
         }
-
-        Pointer = CertificatesEnd;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {

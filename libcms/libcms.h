@@ -38,7 +38,7 @@ typedef struct _CMS_PKCS7_SIGNER_INFO {
     INT Version;
     CMS_BLOB IssuerAndSerialNumber;
     CMS_BLOB DigestAlgorithm;
-    CMS_BLOB SignedAttrs;
+    PCMS_PKCS7_ATTRIBUTE SignedAttributes;
     CMS_BLOB SignatureAlgorithm;
     CMS_BLOB Signature;
     PCMS_PKCS7_ATTRIBUTE UnsignedAttributes;
