@@ -349,6 +349,7 @@ CmsPkcs7ParseDer (
     PUINT8 Pkcs7End;
     PUINT8 ContentInfoEnd;
     PUINT8 ContentEnd;
+    PUINT8 EncapsulatedContentInfoEnd;
     PUINT8 CertificatesEnd;
     PUINT8 SignerInfosEnd;
     PCMS_PKCS7_SIGNER_INFO SignerInfos;
@@ -364,21 +365,21 @@ CmsPkcs7ParseDer (
     mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
 
     if (mbedtls_asn1_get_tag(&Pointer, Pkcs7End, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     ContentInfoEnd = Pointer + Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentInfoEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     if (Length != sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) {
-        return FALSE;
+        goto Cleanup;
     }
 
     if (memcmp(Pointer, MBEDTLS_OID_PKCS7_SIGNED_DATA, sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     Pkcs7Der->ContentTypeOid.Data = Pointer;
@@ -386,21 +387,21 @@ CmsPkcs7ParseDer (
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     ContentEnd = Pointer + Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     if (mbedtls_asn1_get_int(&Pointer, ContentEnd, &Pkcs7Der->SignedData.Version) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     Pkcs7Der->SignedData.DigestAlgorithms.Data = Pointer;
@@ -408,12 +409,28 @@ CmsPkcs7ParseDer (
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
-    Pkcs7Der->SignedData.EncapContentInfo.Data = Pointer;
-    Pkcs7Der->SignedData.EncapContentInfo.Length = Length;
+    EncapsulatedContentInfoEnd = Pointer + Length;
+
+    if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
+        goto Cleanup;
+    }
+
+    Pkcs7Der->SignedData.EncapsulatedContentInfo.ContentTypeOid.Data = Pointer;
+    Pkcs7Der->SignedData.EncapsulatedContentInfo.ContentTypeOid.Length = Length;
     Pointer += Length;
+
+    if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
+        if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+            goto Cleanup;
+        }
+
+        Pkcs7Der->SignedData.EncapsulatedContentInfo.Content.Data = Pointer;
+        Pkcs7Der->SignedData.EncapsulatedContentInfo.Content.Length = Length;
+        Pointer += Length;
+    }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
         CertificatesEnd = Pointer + Length;
@@ -464,7 +481,7 @@ CmsPkcs7ParseDer (
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
-        return FALSE;
+        goto Cleanup;
     }
 
     SignerInfosEnd = Pointer + Length;

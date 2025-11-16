@@ -44,10 +44,15 @@ typedef struct _CMS_PKCS7_SIGNER_INFO {
     PCMS_PKCS7_ATTRIBUTE UnsignedAttributes;
 } CMS_PKCS7_SIGNER_INFO, *PCMS_PKCS7_SIGNER_INFO;
 
+typedef struct _CMS_PKCS7_ENCAPSULATED_CONTENT_INFO {
+    CMS_BLOB ContentTypeOid;
+    CMS_BLOB Content;
+} CMS_PKCS7_ENCAPSULATED_CONTENT_INFO, *PCMS_PKCS7_ENCAPSULATED_CONTENT_INFO;
+
 typedef struct _CMS_PKCS7_SIGNED_DATA {
     INT Version;
     CMS_BLOB DigestAlgorithms;
-    CMS_BLOB EncapContentInfo;
+    CMS_PKCS7_ENCAPSULATED_CONTENT_INFO EncapsulatedContentInfo;
     CMS_PKCS7_CERTIFICATE_SET Certificates;
     CMS_PKCS7_CRLS CertificateRevocationLists;
     PCMS_PKCS7_SIGNER_INFO SignerInfos;
