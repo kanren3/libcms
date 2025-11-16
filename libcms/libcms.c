@@ -423,10 +423,6 @@ CmsPkcs7ParseDer (
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
-        if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
-            goto Cleanup;
-        }
-
         Pkcs7Der->SignedData.EncapsulatedContentInfo.Content.Data = Pointer;
         Pkcs7Der->SignedData.EncapsulatedContentInfo.Content.Length = Length;
         Pointer += Length;
