@@ -805,11 +805,16 @@ CmsTestVerifyPkcs7Data (
         goto Cleanup;
     }
 
+    if (Certificate->Length < FIELD_OFFSET(CMS_WIN_CERTIFICATE, Certificate)) {
+        Status = STATUS_INVALID_IMAGE_FORMAT;
+        goto Cleanup;
+    }
+
     EncodedSignedSize = Certificate->Length - FIELD_OFFSET(CMS_WIN_CERTIFICATE, Certificate);
     EncodedSignedData = Certificate->Certificate;
 
     if ((EncodedSignedData + EncodedSignedSize) > (Buffer + StandardInformation.EndOfFile.LowPart)) {
-        Status = STATUS_ACCESS_VIOLATION;
+        Status = STATUS_INVALID_IMAGE_FORMAT;
         goto Cleanup;
     }
 
