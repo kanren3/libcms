@@ -1,16 +1,123 @@
 #include <mbedtls/mbedtls_config.h>
-#include <ntifs.h>
-#include <windef.h>
-#include <ntstrsafe.h>
-#include <ntimage.h>
-#include <intrin.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/asn1.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/x509_crl.h>
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
+
+#include <ntifs.h>
+#include <windef.h>
+#include <ntstrsafe.h>
+#include <ntimage.h>
+#include <intrin.h>
+
 #include "libcms.h"
+
+#define MBEDTLS_OID_PKCS7                            MBEDTLS_OID_PKCS  "\x07"
+#define MBEDTLS_OID_PKCS7_DATA                       MBEDTLS_OID_PKCS7 "\x01"
+#define MBEDTLS_OID_PKCS7_SIGNED_DATA                MBEDTLS_OID_PKCS7 "\x02"
+#define MBEDTLS_OID_PKCS7_ENVELOPED_DATA             MBEDTLS_OID_PKCS7 "\x03"
+#define MBEDTLS_OID_PKCS7_SIGNED_AND_ENVELOPED_DATA  MBEDTLS_OID_PKCS7 "\x04"
+#define MBEDTLS_OID_PKCS7_DIGESTED_DATA              MBEDTLS_OID_PKCS7 "\x05"
+#define MBEDTLS_OID_PKCS7_ENCRYPTED_DATA             MBEDTLS_OID_PKCS7 "\x06"
+
+typedef struct mbedtls_x509_crt CMS_X509_CERTIFICATE;
+typedef struct mbedtls_x509_crl CMS_X509_CRL;
+
+typedef CMS_X509_CERTIFICATE *PCMS_X509_CERTIFICATE;
+typedef CMS_X509_CRL *PCMS_X509_CRL;
+
+typedef struct _CMS_BLOB {
+    PUINT8 Data;
+    SIZE_T Length;
+} CMS_BLOB, *PCMS_BLOB;
+
+typedef struct _CMS_ATTRIBUTE_VALUE {
+    CMS_BLOB Blob;
+    struct _CMS_ATTRIBUTE_VALUE *Next;
+} CMS_ATTRIBUTE_VALUE, *PCMS_ATTRIBUTE_VALUE;
+
+typedef struct _CMS_ATTRIBUTE {
+    CMS_BLOB AttributeTypeOid;
+    PCMS_ATTRIBUTE_VALUE Values;
+    struct _CMS_ATTRIBUTE *Next;
+} CMS_ATTRIBUTE, *PCMS_ATTRIBUTE;
+
+typedef struct _CMS_SIGNER_INFO {
+    INT32 Version;
+    CMS_BLOB IssuerAndSerialNumber;
+    CMS_BLOB DigestAlgorithm;
+    PCMS_ATTRIBUTE SignedAttributes;
+    CMS_BLOB SignatureAlgorithm;
+    CMS_BLOB Signature;
+    PCMS_ATTRIBUTE UnsignedAttributes;
+    struct _CMS_SIGNER_INFO *Next;
+} CMS_SIGNER_INFO, *PCMS_SIGNER_INFO;
+
+typedef struct _CMS_ENCAPSULATED_CONTENT_INFO {
+    CMS_BLOB ContentTypeOid;
+    CMS_BLOB Content;
+} CMS_ENCAPSULATED_CONTENT_INFO, *PCMS_ENCAPSULATED_CONTENT_INFO;
+
+typedef struct _CMS_SIGNED_DATA {
+    INT32 Version;
+    CMS_BLOB DigestAlgorithms;
+    CMS_ENCAPSULATED_CONTENT_INFO EncapsulatedContentInfo;
+    CMS_X509_CERTIFICATE Certificates;
+    CMS_X509_CRL CertificateRevocationLists;
+    PCMS_SIGNER_INFO SignerInfos;
+} CMS_SIGNED_DATA, *PCMS_SIGNED_DATA;
+
+typedef struct _CMS_PKCS7_DER {
+    CMS_BLOB ContentTypeOid;
+    CMS_SIGNED_DATA SignedData;
+} CMS_PKCS7_DER, *PCMS_PKCS7_DER;
+
+FORCEINLINE
+PVOID
+CmsAllocatePoolZero (
+    _In_ SIZE_T NumberOfBytes
+)
+{
+    PVOID Pointer;
+
+    Pointer = ExAllocatePoolWithTag(NonPagedPool, NumberOfBytes, 'smcl');
+
+    if (NULL != Pointer) {
+        RtlZeroBytes(Pointer, NumberOfBytes);
+    }
+
+    return Pointer;
+}
+
+FORCEINLINE
+VOID
+CmsFreePool (
+    _In_ PVOID Pointer
+)
+{
+    ExFreePoolWithTag(Pointer, 'smcl');
+}
+
+VOID
+CmsDbgPrint (
+    _In_ PCSTR Format,
+    _In_ ...
+)
+{
+    va_list ArgList;
+
+    va_start(ArgList, Format);
+
+    vDbgPrintExWithPrefix("[ CMS ] ",
+                          DPFLTR_IHVDRIVER_ID,
+                          DPFLTR_ERROR_LEVEL,
+                          Format,
+                          ArgList);
+
+    va_end(ArgList);
+}
 
 PCMS_ATTRIBUTE_VALUE
 CmsParseAttributeValue (
@@ -311,7 +418,7 @@ Cleanup:
 }
 
 VOID
-Cms7FreeSignerInfos (
+CmsFreeSignerInfos (
     _In_ PCMS_SIGNER_INFO SignerInfos
 )
 {
@@ -523,7 +630,7 @@ Cleanup:
         mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
         mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
 
-        Cms7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
+        CmsFreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
         CmsFreePool(Pkcs7Der);
     }
 
@@ -539,277 +646,19 @@ CmsFreePkcs7Der (
         mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
         mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
 
-        Cms7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
+        CmsFreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
         CmsFreePool(Pkcs7Der);
     }
 }
 
 VOID
-PrintCertificate (
-    _In_ PCMS_X509_CERTIFICATE_SET Certificate
-)
-{
-    ANSI_STRING AnsiString;
-    mbedtls_asn1_named_data *NameData;
-    CHAR OidBuffer[128];
-    const CHAR *Description;
-    mbedtls_pk_type_t PkType;
-
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n");
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "    Certificate Information\n");
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n\n");
-
-    // Version
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Version]\n");
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  v%d (0x%x)\n\n", Certificate->version, Certificate->version);
-
-    // Serial Number
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Serial Number]\n");
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
-    for (SIZE_T i = 0; i < Certificate->serial.len; i++) {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", Certificate->serial.p[i]);
-        if (i < Certificate->serial.len - 1) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, ":");
-        }
-    }
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
-
-    // Issuer
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Issuer]\n");
-    NameData = &Certificate->issuer;
-    while (NameData != NULL) {
-        if (NameData->oid.len > 0) {
-            if (mbedtls_oid_get_attr_short_name(&NameData->oid, &Description) == 0) {
-                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "%s", Description);
-            } else {
-                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "Unknown");
-            }
-
-            AnsiString.Buffer = (PCHAR)NameData->val.p;
-            AnsiString.Length = (USHORT)NameData->val.len;
-            AnsiString.MaximumLength = AnsiString.Length;
-
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  %-20s = %Z\n", OidBuffer, &AnsiString);
-        }
-        NameData = NameData->next;
-    }
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-
-    // Subject
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Subject]\n");
-    NameData = &Certificate->subject;
-    while (NameData != NULL) {
-        if (NameData->oid.len > 0) {
-            if (mbedtls_oid_get_attr_short_name(&NameData->oid, &Description) == 0) {
-                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "%s", Description);
-            } else {
-                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "Unknown");
-            }
-
-            AnsiString.Buffer = (PCHAR)NameData->val.p;
-            AnsiString.Length = (USHORT)NameData->val.len;
-            AnsiString.MaximumLength = AnsiString.Length;
-
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  %-20s = %Z\n", OidBuffer, &AnsiString);
-        }
-        NameData = NameData->next;
-    }
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-
-    // Validity Period
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Validity]\n");
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
-               "  Not Before          : %04d-%02d-%02d %02d:%02d:%02d UTC\n",
-               Certificate->valid_from.year, Certificate->valid_from.mon, Certificate->valid_from.day,
-               Certificate->valid_from.hour, Certificate->valid_from.min, Certificate->valid_from.sec);
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
-               "  Not After           : %04d-%02d-%02d %02d:%02d:%02d UTC\n\n",
-               Certificate->valid_to.year, Certificate->valid_to.mon, Certificate->valid_to.day,
-               Certificate->valid_to.hour, Certificate->valid_to.min, Certificate->valid_to.sec);
-
-    // Signature Algorithm
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Signature Algorithm]\n");
-    if (mbedtls_oid_get_sig_alg_desc(&Certificate->sig_oid, &Description) == 0) {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  %s\n\n", Description);
-    } else {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Unknown\n\n");
-    }
-
-    // Public Key Info
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Public Key Info]\n");
-    PkType = mbedtls_pk_get_type(&Certificate->pk);
-
-    switch (PkType) {
-    case MBEDTLS_PK_RSA:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : RSA\n");
-        break;
-    case MBEDTLS_PK_ECKEY:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : EC\n");
-        break;
-    case MBEDTLS_PK_ECDSA:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : ECDSA\n");
-        break;
-    default:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Algorithm           : Unknown (%d)\n", PkType);
-        break;
-    }
-
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Key Size            : %d bits\n\n", 
-               mbedtls_pk_get_bitlen(&Certificate->pk));
-
-    // Extensions
-    if (Certificate->ext_types != 0) {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Extensions]\n");
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_BASIC_CONSTRAINTS) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
-                       "  Basic Constraints   : CA = %s", 
-                       Certificate->ca_istrue ? "TRUE" : "FALSE");
-            if (Certificate->ca_istrue && Certificate->max_pathlen > 0) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, 
-                           ", pathlen = %d", Certificate->max_pathlen);
-            }
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-        }
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_KEY_USAGE) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Key Usage           : ");
-
-            BOOLEAN FirstUsage = TRUE;
-            if (Certificate->key_usage & MBEDTLS_X509_KU_DIGITAL_SIGNATURE) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Digital Signature");
-                FirstUsage = FALSE;
-            }
-            if (Certificate->key_usage & MBEDTLS_X509_KU_NON_REPUDIATION) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sNon Repudiation", FirstUsage ? "" : ", ");
-                FirstUsage = FALSE;
-            }
-            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_ENCIPHERMENT) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sKey Encipherment", FirstUsage ? "" : ", ");
-                FirstUsage = FALSE;
-            }
-            if (Certificate->key_usage & MBEDTLS_X509_KU_DATA_ENCIPHERMENT) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sData Encipherment", FirstUsage ? "" : ", ");
-                FirstUsage = FALSE;
-            }
-            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_AGREEMENT) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sKey Agreement", FirstUsage ? "" : ", ");
-                FirstUsage = FALSE;
-            }
-            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_CERT_SIGN) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sCertificate Sign", FirstUsage ? "" : ", ");
-                FirstUsage = FALSE;
-            }
-            if (Certificate->key_usage & MBEDTLS_X509_KU_CRL_SIGN) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%sCRL Sign", FirstUsage ? "" : ", ");
-                FirstUsage = FALSE;
-            }
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-        }
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_SUBJECT_ALT_NAME) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Subject Alt Name    : Present\n");
-        }
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_NS_CERT_TYPE) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Netscape Cert Type  : 0x%02X\n", Certificate->ns_cert_type);
-        }
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Extended Key Usage  : Present\n");
-        }
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Subject Key ID      : Present\n");
-        }
-
-        if (Certificate->ext_types & MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER) {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  Authority Key ID    : Present\n");
-        }
-
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-    }
-
-    // Certificate Thumbprint (SHA-256 hash of entire certificate)
-    {
-        UCHAR Thumbprint[20];
-        INT Result;
-
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[Certificate Thumbprint (SHA-1)]\n");
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
-
-        Result = mbedtls_sha1(Certificate->raw.p, Certificate->raw.len, Thumbprint);
-
-        if (Result == 0) {
-            for (SIZE_T i = 0; i < sizeof(Thumbprint); i++) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", Thumbprint[i]);
-                if (i < sizeof(Thumbprint) - 1) {
-                    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
-                }
-            }
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
-        } else {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Failed to compute (error: %d)\n\n", Result);
-        }
-    }
-
-    if (Certificate->sig_md == MBEDTLS_MD_SHA1) {
-        UCHAR TbsHash[20];
-        INT Result;
-
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[ToBeSignedHash (SHA-1)]\n");
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
-
-        Result = mbedtls_sha1(Certificate->tbs.p, Certificate->tbs.len, TbsHash);
-
-        if (Result == 0) {
-            for (SIZE_T i = 0; i < sizeof(TbsHash); i++) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", TbsHash[i]);
-                if (i < sizeof(TbsHash) - 1) {
-                    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
-                }
-            }
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
-        } else {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Failed to compute (error: %d)\n\n", Result);
-        }
-    }
-
-    if (Certificate->sig_md == MBEDTLS_MD_SHA256) {
-        UCHAR TbsHash[32];
-        INT Result;
-
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "[ToBeSignedHash (SHA-256)]\n");
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "  ");
-
-        Result = mbedtls_sha256(Certificate->tbs.p, Certificate->tbs.len, TbsHash, 0);
-
-        if (Result == 0) {
-            for (SIZE_T i = 0; i < sizeof(TbsHash); i++) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "%02X", TbsHash[i]);
-                if (i < sizeof(TbsHash) - 1) {
-                    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " ");
-                }
-            }
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n\n");
-        } else {
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Failed to compute (error: %d)\n\n", Result);
-        }
-    }
-
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "====================================\n\n");
-}
-
-VOID
-TestRecursiveParseDer (
+CmsRecursiveParsePkcs7Der (
     _In_ PUINT8 Pkcs7Data,
-    _In_ SIZE_T Pkcs7Length,
-    _In_ UINT32 Index
+    _In_ SIZE_T Pkcs7Length
 )
 {
     PCMS_PKCS7_DER Pkcs7Der;
-    PCMS_X509_CERTIFICATE_SET Certificate;
+    PCMS_X509_CERTIFICATE Certificate;
     PCMS_ATTRIBUTE UnsignedAttribute;
     PCMS_ATTRIBUTE_VALUE UnsignedAttributeValue;
 
@@ -819,7 +668,6 @@ TestRecursiveParseDer (
         Certificate = &Pkcs7Der->SignedData.Certificates;
 
         while (NULL != Certificate) {
-            PrintCertificate(Certificate);
             Certificate = Certificate->next;
         }
 
@@ -829,7 +677,7 @@ TestRecursiveParseDer (
             UnsignedAttributeValue = UnsignedAttribute->Values;
 
             while (NULL != UnsignedAttributeValue) {
-                TestRecursiveParseDer(UnsignedAttributeValue->Blob.Data, UnsignedAttributeValue->Blob.Length, Index + 1);
+                CmsRecursiveParsePkcs7Der(UnsignedAttributeValue->Blob.Data, UnsignedAttributeValue->Blob.Length);
                 UnsignedAttributeValue = UnsignedAttributeValue->Next;
             }
 
@@ -850,6 +698,14 @@ RtlImageDirectoryEntryToData(
     _Out_ PULONG Size
 );
 
+#define WIN_CERT_REVISION_1_0               (0x0100)
+#define WIN_CERT_REVISION_2_0               (0x0200)
+
+#define WIN_CERT_TYPE_X509                  (0x0001)
+#define WIN_CERT_TYPE_PKCS_SIGNED_DATA      (0x0002)
+#define WIN_CERT_TYPE_RESERVED_1            (0x0003)
+#define WIN_CERT_TYPE_TS_STACK_SIGNED       (0x0004)
+
 typedef struct _CMS_WIN_CERTIFICATE {
     UINT32 Length;
     UINT16 Revision;
@@ -857,35 +713,27 @@ typedef struct _CMS_WIN_CERTIFICATE {
     UINT8 Certificate[1];
 } CMS_WIN_CERTIFICATE, *PCMS_WIN_CERTIFICATE;
 
-#define WIN_CERT_REVISION_1_0               (0x0100)
-#define WIN_CERT_REVISION_2_0               (0x0200)
-
-#define WIN_CERT_TYPE_X509                  (0x0001)   // bCertificate contains an X.509 Certificate
-#define WIN_CERT_TYPE_PKCS_SIGNED_DATA      (0x0002)   // bCertificate contains a PKCS SignedData structure
-#define WIN_CERT_TYPE_RESERVED_1            (0x0003)   // Reserved
-#define WIN_CERT_TYPE_TS_STACK_SIGNED       (0x0004)   // Terminal Server Protocol Stack Certificate signing
-
 NTSTATUS
-TestCmsPkcs7ParseDer (
+CmsTestVerifyPkcs7Data (
     VOID
 )
 {
     NTSTATUS Status;
-    UNICODE_STRING FilePathString;
+    UNICODE_STRING ImageFullPath;
     OBJECT_ATTRIBUTES ObjectAttributes;
     IO_STATUS_BLOCK IoStatusBlock;
     HANDLE FileHandle = NULL;
-    FILE_STANDARD_INFORMATION StandardInformation = { 0 };
+    FILE_STANDARD_INFORMATION StandardInformation;
     PUINT8 Buffer = NULL;
     PCMS_WIN_CERTIFICATE Certificate;
     UINT32 SecurityDataSize;
     UINT32 EncodedSignedSize;
     PUINT8 EncodedSignedData;
 
-    RtlInitUnicodeString(&FilePathString, L"\\??\\C:\\test.sys");
+    RtlInitUnicodeString(&ImageFullPath, L"\\??\\C:\\test.sys");
 
     InitializeObjectAttributes(&ObjectAttributes,
-                               &FilePathString,
+                               &ImageFullPath,
                                OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
@@ -965,7 +813,7 @@ TestCmsPkcs7ParseDer (
         goto Cleanup;
     }
 
-    TestRecursiveParseDer(EncodedSignedData, EncodedSignedSize, 0);
+    CmsRecursiveParsePkcs7Der(EncodedSignedData, EncodedSignedSize);
 
     CmsFreePool(Buffer);
     ZwClose(FileHandle);
@@ -981,33 +829,6 @@ Cleanup:
     if (NULL != FileHandle) {
         ZwClose(FileHandle);
     }
-
-    return Status;
-}
-
-VOID
-NTAPI
-DriverUnload (
-    _In_ PDRIVER_OBJECT DriverObject
-)
-{
-
-}
-
-NTSTATUS
-NTAPI
-DriverEntry (
-    _In_ PDRIVER_OBJECT DriverObject,
-    _In_ PUNICODE_STRING RegistryPath
-)
-{
-    NTSTATUS Status;
-
-    DriverObject->DriverUnload = DriverUnload;
-
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "TestCmsPkcs7ParseDer=%08X\n", TestCmsPkcs7ParseDer());
-
-    Status = STATUS_UNSUCCESSFUL;
 
     return Status;
 }
