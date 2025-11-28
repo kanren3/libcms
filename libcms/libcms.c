@@ -302,6 +302,7 @@ CmsParseSignerInfo (
 Cleanup:
 
     if (NULL != SignerInfo) {
+        CmsFreeAttributes(SignerInfo->SignedAttributes);
         CmsFreeAttributes(SignerInfo->UnsignedAttributes);
         CmsFreePool(SignerInfo);
     }
@@ -324,17 +325,17 @@ Cms7FreeSignerInfos (
             Previous = Current;
             Current = Current->Next;
 
+            CmsFreeAttributes(Previous->SignedAttributes);
             CmsFreeAttributes(Previous->UnsignedAttributes);
             CmsFreePool(Previous);
         }
     }
 }
 
-BOOLEAN
-CmsPkcs7ParseDer (
+PCMS_PKCS7_DER
+CmsParsePkcs7Der (
     _In_ PUINT8 Pkcs7Data,
-    _In_ SIZE_T Pkcs7Length,
-    _Out_ PCMS_PKCS7_DER Pkcs7Der
+    _In_ SIZE_T Pkcs7Length
 )
 {
     INT Result;
@@ -346,6 +347,7 @@ CmsPkcs7ParseDer (
     PUINT8 EncapsulatedContentInfoEnd;
     PUINT8 CertificatesEnd;
     PUINT8 SignerInfosEnd;
+    PCMS_PKCS7_DER Pkcs7Der;
     PCMS_SIGNER_INFO SignerInfos;
     PCMS_SIGNER_INFO Node;
     SIZE_T Length;
@@ -353,7 +355,11 @@ CmsPkcs7ParseDer (
     Pointer = Pkcs7Data;
     Pkcs7End = Pkcs7Data + Pkcs7Length;
 
-    memset(Pkcs7Der, 0, sizeof(CMS_PKCS7_DER));
+    Pkcs7Der = CmsAllocatePoolZero(sizeof(CMS_PKCS7_DER));
+
+    if (NULL == Pkcs7Der) {
+        goto Cleanup;
+    }
 
     mbedtls_x509_crt_init(&Pkcs7Der->SignedData.Certificates);
     mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
@@ -509,29 +515,33 @@ CmsPkcs7ParseDer (
         Pointer += Length;
     }
 
-    return TRUE;
+    return Pkcs7Der;
 
 Cleanup:
 
-    mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
+    if (NULL != Pkcs7Der) {
+        mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
+        mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
 
-    Cms7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
-    Pkcs7Der->SignedData.SignerInfos = NULL;
+        Cms7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
+        CmsFreePool(Pkcs7Der);
+    }
 
-    return FALSE;
+    return NULL;
 }
 
 VOID
-CmsPkcs7FreeDer (
+CmsFreePkcs7Der (
     _Inout_ PCMS_PKCS7_DER Pkcs7Der
 )
 {
-    mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
+    if (NULL != Pkcs7Der) {
+        mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
+        mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
 
-    Cms7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
-    Pkcs7Der->SignedData.SignerInfos = NULL;
+        Cms7FreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
+        CmsFreePool(Pkcs7Der);
+    }
 }
 
 VOID
@@ -798,20 +808,22 @@ TestRecursiveParseDer (
     _In_ UINT32 Index
 )
 {
-    CMS_PKCS7_DER Pkcs7Der;
+    PCMS_PKCS7_DER Pkcs7Der;
     PCMS_X509_CERTIFICATE_SET Certificate;
     PCMS_ATTRIBUTE UnsignedAttribute;
     PCMS_ATTRIBUTE_VALUE UnsignedAttributeValue;
 
-    if (FALSE != CmsPkcs7ParseDer(Pkcs7Data, Pkcs7Length, &Pkcs7Der)) {
-        Certificate = &Pkcs7Der.SignedData.Certificates;
+    Pkcs7Der = CmsParsePkcs7Der(Pkcs7Data, Pkcs7Length);
+
+    if (NULL != Pkcs7Der) {
+        Certificate = &Pkcs7Der->SignedData.Certificates;
 
         while (NULL != Certificate) {
             PrintCertificate(Certificate);
             Certificate = Certificate->next;
         }
 
-        UnsignedAttribute = Pkcs7Der.SignedData.SignerInfos->UnsignedAttributes;
+        UnsignedAttribute = Pkcs7Der->SignedData.SignerInfos->UnsignedAttributes;
 
         while (NULL != UnsignedAttribute) {
             UnsignedAttributeValue = UnsignedAttribute->Values;
@@ -824,7 +836,7 @@ TestRecursiveParseDer (
             UnsignedAttribute = UnsignedAttribute->Next;
         }
 
-        CmsPkcs7FreeDer(&Pkcs7Der);
+        CmsFreePkcs7Der(Pkcs7Der);
     }
 }
 
