@@ -3,11 +3,6 @@
 
 EXTERN_C_START
 
-NTSTATUS
-CmsTestVerifyPkcs7Data (
-    VOID
-);
-
 EXTERN_C_END
 
 #endif

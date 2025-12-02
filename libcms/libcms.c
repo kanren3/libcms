@@ -82,7 +82,7 @@ CmsAllocatePoolZero (
 {
     PVOID Pointer;
 
-    Pointer = ExAllocatePoolWithTag(NonPagedPool, NumberOfBytes, 'smcl');
+    Pointer = ExAllocatePoolWithTag(NonPagedPool, NumberOfBytes, 'lsmc');
 
     if (NULL != Pointer) {
         RtlZeroBytes(Pointer, NumberOfBytes);
@@ -97,7 +97,7 @@ CmsFreePool (
     _In_ PVOID Pointer
 )
 {
-    ExFreePoolWithTag(Pointer, 'smcl');
+    ExFreePoolWithTag(Pointer, 'lsmc');
 }
 
 VOID
@@ -110,11 +110,7 @@ CmsDbgPrint (
 
     va_start(ArgList, Format);
 
-    vDbgPrintExWithPrefix("[ CMS ] ",
-                          DPFLTR_IHVDRIVER_ID,
-                          DPFLTR_ERROR_LEVEL,
-                          Format,
-                          ArgList);
+    vDbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, Format, ArgList);
 
     va_end(ArgList);
 }
@@ -652,6 +648,263 @@ CmsFreePkcs7Der (
 }
 
 VOID
+CmsPrintCertificateInfo (
+    _In_ PCMS_X509_CERTIFICATE Certificate
+)
+{
+    ANSI_STRING AnsiString;
+    mbedtls_asn1_named_data *NameData;
+    CHAR OidBuffer[128];
+    const CHAR *Description;
+    mbedtls_pk_type_t PkType;
+
+    CmsDbgPrint("\n");
+    CmsDbgPrint("====================================\n");
+    CmsDbgPrint("    Certificate Information\n");
+    CmsDbgPrint("====================================\n\n");
+
+    // Version
+    CmsDbgPrint("[Version]\n");
+    CmsDbgPrint("  v%d (0x%x)\n\n", Certificate->version, Certificate->version);
+
+    // Serial Number
+    CmsDbgPrint("[Serial Number]\n");
+    CmsDbgPrint("  ");
+    for (SIZE_T i = 0; i < Certificate->serial.len; i++) {
+        CmsDbgPrint("%02X", Certificate->serial.p[i]);
+        if (i < Certificate->serial.len - 1) {
+            CmsDbgPrint(":");
+        }
+    }
+    CmsDbgPrint("\n\n");
+
+    // Issuer
+    CmsDbgPrint("[Issuer]\n");
+    NameData = &Certificate->issuer;
+    while (NameData != NULL) {
+        if (NameData->oid.len > 0) {
+            if (mbedtls_oid_get_attr_short_name(&NameData->oid, &Description) == 0) {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "%s", Description);
+            } else {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "Unknown");
+            }
+
+            AnsiString.Buffer = (PCHAR)NameData->val.p;
+            AnsiString.Length = (USHORT)NameData->val.len;
+            AnsiString.MaximumLength = AnsiString.Length;
+
+            CmsDbgPrint("  %-20s = %Z\n", OidBuffer, &AnsiString);
+        }
+        NameData = NameData->next;
+    }
+    CmsDbgPrint("\n");
+
+    // Subject
+    CmsDbgPrint("[Subject]\n");
+    NameData = &Certificate->subject;
+    while (NameData != NULL) {
+        if (NameData->oid.len > 0) {
+            if (mbedtls_oid_get_attr_short_name(&NameData->oid, &Description) == 0) {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "%s", Description);
+            } else {
+                RtlStringCbPrintfA(OidBuffer, sizeof(OidBuffer), "Unknown");
+            }
+
+            AnsiString.Buffer = (PCHAR)NameData->val.p;
+            AnsiString.Length = (USHORT)NameData->val.len;
+            AnsiString.MaximumLength = AnsiString.Length;
+
+            CmsDbgPrint("  %-20s = %Z\n", OidBuffer, &AnsiString);
+        }
+        NameData = NameData->next;
+    }
+    CmsDbgPrint("\n");
+
+    // Validity Period
+    CmsDbgPrint("[Validity]\n");
+    CmsDbgPrint(
+               "  Not Before          : %04d-%02d-%02d %02d:%02d:%02d UTC\n",
+               Certificate->valid_from.year, Certificate->valid_from.mon, Certificate->valid_from.day,
+               Certificate->valid_from.hour, Certificate->valid_from.min, Certificate->valid_from.sec);
+    CmsDbgPrint(
+               "  Not After           : %04d-%02d-%02d %02d:%02d:%02d UTC\n\n",
+               Certificate->valid_to.year, Certificate->valid_to.mon, Certificate->valid_to.day,
+               Certificate->valid_to.hour, Certificate->valid_to.min, Certificate->valid_to.sec);
+
+    // Signature Algorithm
+    CmsDbgPrint("[Signature Algorithm]\n");
+    if (mbedtls_oid_get_sig_alg_desc(&Certificate->sig_oid, &Description) == 0) {
+        CmsDbgPrint("  %s\n\n", Description);
+    } else {
+        CmsDbgPrint("  Unknown\n\n");
+    }
+
+    // Public Key Info
+    CmsDbgPrint("[Public Key Info]\n");
+    PkType = mbedtls_pk_get_type(&Certificate->pk);
+
+    switch (PkType) {
+    case MBEDTLS_PK_RSA:
+        CmsDbgPrint("  Algorithm           : RSA\n");
+        break;
+    case MBEDTLS_PK_ECKEY:
+        CmsDbgPrint("  Algorithm           : EC\n");
+        break;
+    case MBEDTLS_PK_ECDSA:
+        CmsDbgPrint("  Algorithm           : ECDSA\n");
+        break;
+    default:
+        CmsDbgPrint("  Algorithm           : Unknown (%d)\n", PkType);
+        break;
+    }
+
+    CmsDbgPrint("  Key Size            : %d bits\n\n", 
+               mbedtls_pk_get_bitlen(&Certificate->pk));
+
+    // Extensions
+    if (Certificate->ext_types != 0) {
+        CmsDbgPrint("[Extensions]\n");
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_BASIC_CONSTRAINTS) {
+            CmsDbgPrint(
+                       "  Basic Constraints   : CA = %s", 
+                       Certificate->ca_istrue ? "TRUE" : "FALSE");
+            if (Certificate->ca_istrue && Certificate->max_pathlen > 0) {
+                CmsDbgPrint(
+                           ", pathlen = %d", Certificate->max_pathlen);
+            }
+            CmsDbgPrint("\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_KEY_USAGE) {
+            CmsDbgPrint("  Key Usage           : ");
+
+            BOOLEAN FirstUsage = TRUE;
+            if (Certificate->key_usage & MBEDTLS_X509_KU_DIGITAL_SIGNATURE) {
+                CmsDbgPrint("Digital Signature");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_NON_REPUDIATION) {
+                CmsDbgPrint("%sNon Repudiation", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_ENCIPHERMENT) {
+                CmsDbgPrint("%sKey Encipherment", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_DATA_ENCIPHERMENT) {
+                CmsDbgPrint("%sData Encipherment", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_AGREEMENT) {
+                CmsDbgPrint("%sKey Agreement", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_KEY_CERT_SIGN) {
+                CmsDbgPrint("%sCertificate Sign", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            if (Certificate->key_usage & MBEDTLS_X509_KU_CRL_SIGN) {
+                CmsDbgPrint("%sCRL Sign", FirstUsage ? "" : ", ");
+                FirstUsage = FALSE;
+            }
+            CmsDbgPrint("\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_SUBJECT_ALT_NAME) {
+            CmsDbgPrint("  Subject Alt Name    : Present\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_NS_CERT_TYPE) {
+            CmsDbgPrint("  Netscape Cert Type  : 0x%02X\n", Certificate->ns_cert_type);
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
+            CmsDbgPrint("  Extended Key Usage  : Present\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_SUBJECT_KEY_IDENTIFIER) {
+            CmsDbgPrint("  Subject Key ID      : Present\n");
+        }
+
+        if (Certificate->ext_types & MBEDTLS_X509_EXT_AUTHORITY_KEY_IDENTIFIER) {
+            CmsDbgPrint("  Authority Key ID    : Present\n");
+        }
+
+        CmsDbgPrint("\n");
+    }
+
+    // Certificate Thumbprint (SHA-256 hash of entire certificate)
+    {
+        UCHAR Thumbprint[20];
+        INT Result;
+
+        CmsDbgPrint("[Certificate Thumbprint (SHA-1)]\n");
+        CmsDbgPrint("  ");
+
+        Result = mbedtls_sha1(Certificate->raw.p, Certificate->raw.len, Thumbprint);
+
+        if (Result == 0) {
+            for (SIZE_T i = 0; i < sizeof(Thumbprint); i++) {
+                CmsDbgPrint("%02X", Thumbprint[i]);
+                if (i < sizeof(Thumbprint) - 1) {
+                    CmsDbgPrint(" ");
+                }
+            }
+            CmsDbgPrint("\n\n");
+        } else {
+            CmsDbgPrint("Failed to compute (error: %d)\n\n", Result);
+        }
+    }
+
+    if (Certificate->sig_md == MBEDTLS_MD_SHA1) {
+        UCHAR TbsHash[20];
+        INT Result;
+
+        CmsDbgPrint("[ToBeSignedHash (SHA-1)]\n");
+        CmsDbgPrint("  ");
+
+        Result = mbedtls_sha1(Certificate->tbs.p, Certificate->tbs.len, TbsHash);
+
+        if (Result == 0) {
+            for (SIZE_T i = 0; i < sizeof(TbsHash); i++) {
+                CmsDbgPrint("%02X", TbsHash[i]);
+                if (i < sizeof(TbsHash) - 1) {
+                    CmsDbgPrint(" ");
+                }
+            }
+            CmsDbgPrint("\n\n");
+        } else {
+            CmsDbgPrint("Failed to compute (error: %d)\n\n", Result);
+        }
+    }
+
+    if (Certificate->sig_md == MBEDTLS_MD_SHA256) {
+        UCHAR TbsHash[32];
+        INT Result;
+
+        CmsDbgPrint("[ToBeSignedHash (SHA-256)]\n");
+        CmsDbgPrint("  ");
+
+        Result = mbedtls_sha256(Certificate->tbs.p, Certificate->tbs.len, TbsHash, 0);
+
+        if (Result == 0) {
+            for (SIZE_T i = 0; i < sizeof(TbsHash); i++) {
+                CmsDbgPrint("%02X", TbsHash[i]);
+                if (i < sizeof(TbsHash) - 1) {
+                    CmsDbgPrint(" ");
+                }
+            }
+            CmsDbgPrint("\n\n");
+        } else {
+            CmsDbgPrint("Failed to compute (error: %d)\n\n", Result);
+        }
+    }
+
+    CmsDbgPrint("====================================\n\n");
+}
+
+VOID
 CmsRecursiveParsePkcs7Der (
     _In_ PUINT8 Pkcs7Data,
     _In_ SIZE_T Pkcs7Length
@@ -667,21 +920,24 @@ CmsRecursiveParsePkcs7Der (
     if (NULL != Pkcs7Der) {
         Certificate = &Pkcs7Der->SignedData.Certificates;
 
-        while (NULL != Certificate) {
+        while (NULL != Certificate && NULL != Certificate->raw.p) {
+            CmsPrintCertificateInfo(Certificate);
             Certificate = Certificate->next;
         }
 
-        UnsignedAttribute = Pkcs7Der->SignedData.SignerInfos->UnsignedAttributes;
+        if (NULL != Pkcs7Der->SignedData.SignerInfos) {
+            UnsignedAttribute = Pkcs7Der->SignedData.SignerInfos->UnsignedAttributes;
 
-        while (NULL != UnsignedAttribute) {
-            UnsignedAttributeValue = UnsignedAttribute->Values;
+            while (NULL != UnsignedAttribute) {
+                UnsignedAttributeValue = UnsignedAttribute->Values;
 
-            while (NULL != UnsignedAttributeValue) {
-                CmsRecursiveParsePkcs7Der(UnsignedAttributeValue->Blob.Data, UnsignedAttributeValue->Blob.Length);
-                UnsignedAttributeValue = UnsignedAttributeValue->Next;
+                while (NULL != UnsignedAttributeValue) {
+                    CmsRecursiveParsePkcs7Der(UnsignedAttributeValue->Blob.Data, UnsignedAttributeValue->Blob.Length);
+                    UnsignedAttributeValue = UnsignedAttributeValue->Next;
+                }
+
+                UnsignedAttribute = UnsignedAttribute->Next;
             }
-
-            UnsignedAttribute = UnsignedAttribute->Next;
         }
 
         CmsFreePkcs7Der(Pkcs7Der);
@@ -714,7 +970,7 @@ typedef struct _CMS_WIN_CERTIFICATE {
 } CMS_WIN_CERTIFICATE, *PCMS_WIN_CERTIFICATE;
 
 NTSTATUS
-CmsTestVerifyPkcs7Data (
+CmsTestPausePkcs7Data (
     VOID
 )
 {
@@ -805,11 +1061,6 @@ CmsTestVerifyPkcs7Data (
         goto Cleanup;
     }
 
-    if (Certificate->Length < FIELD_OFFSET(CMS_WIN_CERTIFICATE, Certificate)) {
-        Status = STATUS_INVALID_IMAGE_FORMAT;
-        goto Cleanup;
-    }
-
     EncodedSignedSize = Certificate->Length - FIELD_OFFSET(CMS_WIN_CERTIFICATE, Certificate);
     EncodedSignedData = Certificate->Certificate;
 
@@ -834,6 +1085,35 @@ Cleanup:
     if (NULL != FileHandle) {
         ZwClose(FileHandle);
     }
+
+    return Status;
+}
+
+VOID
+NTAPI
+DriverUnload (
+    _In_ PDRIVER_OBJECT DriverObject
+)
+{
+
+}
+
+NTSTATUS
+NTAPI
+DriverEntry (
+    _In_ PDRIVER_OBJECT DriverObject,
+    _In_ PUNICODE_STRING RegistryPath
+)
+{
+    NTSTATUS Status;
+    UNICODE_STRING ImagePath;
+
+    DriverObject->DriverUnload = DriverUnload;
+
+    Status = CmsTestPausePkcs7Data();
+    CmsDbgPrint("CmsTestPausePkcs7Data = %08X\n", Status);
+
+    Status = STATUS_UNSUCCESSFUL;
 
     return Status;
 }
