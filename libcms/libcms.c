@@ -1,4 +1,5 @@
 #include <mbedtls/mbedtls_config.h>
+#include <mbedtls/error.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/asn1.h>
 #include <mbedtls/x509_crt.h>
@@ -694,6 +695,55 @@ CmsFreePkcs7Der (
     }
 }
 
+int mbedtls_x509_crt_hash(char *buf, size_t size, const char *prefix, const mbedtls_x509_crt *crt)
+{
+    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
+    size_t n;
+    char *p;
+    unsigned char hash[64];
+
+    p = buf;
+    n = size;
+
+    ret = mbedtls_sha1(crt->raw.p, crt->raw.len, hash);
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    ret = _snprintf(p, n, "%sthumbprint (sha1) : ", prefix);
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    for (size_t i = 0; i < 20; i++) {
+        ret = _snprintf(p, n, "%02X", hash[i]);
+        MBEDTLS_X509_SAFE_SNPRINTF;
+    }
+
+    ret = mbedtls_sha1(crt->tbs.p, crt->tbs.len, hash);
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    ret = _snprintf(p, n, "\n%stbs hash (sha1)   : ", prefix);
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    for (size_t i = 0; i < 20; i++) {
+        ret = _snprintf(p, n, "%02X", hash[i]);
+        MBEDTLS_X509_SAFE_SNPRINTF;
+    }
+
+    ret = mbedtls_sha256(crt->tbs.p, crt->tbs.len, hash, 0);
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    ret = _snprintf(p, n, "\n%stbs hash (sha256) : ", prefix);
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    for (size_t i = 0; i < 32; i++) {
+        ret = _snprintf(p, n, "%02X", hash[i]);
+        MBEDTLS_X509_SAFE_SNPRINTF;
+    }
+
+    ret = _snprintf(p, n, "\n");
+    MBEDTLS_X509_SAFE_SNPRINTF;
+
+    return (int)(size - n);
+}
+
 VOID
 CmsPrintCertificateInfo (
     _In_ PCMS_X509_CERTIFICATE Certificate
@@ -701,16 +751,18 @@ CmsPrintCertificateInfo (
 {
     PCHAR Buffer;
 
-    Buffer = CmsAllocatePoolZero(0x10001);
+    Buffer = CmsAllocatePoolZero(0x1001);
 
     if (NULL != Buffer) {
         CmsDbgPrint("============Certificate Information============\n");
         
-        mbedtls_x509_crt_info(Buffer, 0x10000, "", Certificate);
+        mbedtls_x509_crt_info(Buffer, 0x1000, "", Certificate);
+        CmsDbgPrint("%s", Buffer);
+
+        mbedtls_x509_crt_hash(Buffer, 0x1000, "", Certificate);
         CmsDbgPrint("%s", Buffer);
 
         CmsDbgPrint("===============================================\n\n");
-
         CmsFreePool(Buffer);
     }
 }
