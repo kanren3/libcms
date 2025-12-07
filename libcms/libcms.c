@@ -157,24 +157,27 @@ Cleanup:
     va_end(ArgList2);
 }
 
-PCMS_ATTRIBUTE_VALUE
+NTSTATUS
 CmsParseAttributeValue (
     _In_ PUINT8 AttributeValueData,
-    _In_ SIZE_T AttributeValueLength
+    _In_ SIZE_T AttributeValueLength,
+    _Out_ PCMS_ATTRIBUTE_VALUE *AttributeValue
 )
 {
-    PCMS_ATTRIBUTE_VALUE AttributeValue;
+    PCMS_ATTRIBUTE_VALUE NewValue;
 
-    AttributeValue = CmsAllocatePoolZero(sizeof(CMS_ATTRIBUTE_VALUE));
+    NewValue = CmsAllocatePoolZero(sizeof(CMS_ATTRIBUTE_VALUE));
 
-    if (NULL == AttributeValue) {
-        return NULL;
+    if (NULL == NewValue) {
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
+    
+    NewValue->Blob.Data = AttributeValueData;
+    NewValue->Blob.Length = AttributeValueLength;
 
-    AttributeValue->Blob.Data = AttributeValueData;
-    AttributeValue->Blob.Length = AttributeValueLength;
+    *AttributeValue = NewValue;
 
-    return AttributeValue;
+    return STATUS_SUCCESS;
 }
 
 VOID
@@ -197,40 +200,45 @@ CmsFreeAttributeValues (
     }
 }
 
-PCMS_ATTRIBUTE
+NTSTATUS
 CmsParseAttribute (
     _In_ PUINT8 AttributeData,
-    _In_ SIZE_T AttributeLength
+    _In_ SIZE_T AttributeLength,
+    _Out_ PCMS_ATTRIBUTE *Attribute
 )
 {
+    NTSTATUS Status;
     INT Result;
     PUINT8 Buffer;
     PUINT8 Pointer;
     PUINT8 AttributeEnd;
     PUINT8 AttributeValuesEnd;
     SIZE_T Length;
-    PCMS_ATTRIBUTE Attribute;
+    PCMS_ATTRIBUTE NewAttribute;
     PCMS_ATTRIBUTE_VALUE AttributeValue;
     PCMS_ATTRIBUTE_VALUE Node;
 
     Pointer = AttributeData;
     AttributeEnd = AttributeData + AttributeLength;
 
-    Attribute = CmsAllocatePoolZero(sizeof(CMS_ATTRIBUTE));
+    NewAttribute = CmsAllocatePoolZero(sizeof(CMS_ATTRIBUTE));
 
-    if (NULL == Attribute) {
+    if (NULL == NewAttribute) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
         goto Cleanup;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, AttributeEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    Attribute->AttributeTypeOid.Data = Pointer;
-    Attribute->AttributeTypeOid.Length = Length;
+    NewAttribute->AttributeTypeOid.Data = Pointer;
+    NewAttribute->AttributeTypeOid.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, AttributeEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
@@ -245,20 +253,21 @@ CmsParseAttribute (
         }
 
         if (0 != Result) {
+            Status = STATUS_INVALID_IMAGE_HASH;
             goto Cleanup;
         }
 
-        AttributeValue = CmsParseAttributeValue(Buffer, Pointer + Length - Buffer);
+        Status = CmsParseAttributeValue(Buffer, Pointer + Length - Buffer, &AttributeValue);
 
-        if (NULL == AttributeValue) {
+        if (FALSE == NT_SUCCESS(Status)) {
             goto Cleanup;
         }
-
-        if (NULL == Attribute->Values) {
-            Attribute->Values = AttributeValue;
+        
+        if (NULL == NewAttribute->Values) {
+            NewAttribute->Values = AttributeValue;
         }
         else {
-            Node = Attribute->Values;
+            Node = NewAttribute->Values;
 
             while (Node->Next != NULL) {
                 Node = Node->Next;
@@ -270,16 +279,18 @@ CmsParseAttribute (
         Pointer += Length;
     }
 
-    return Attribute;
+    *Attribute = NewAttribute;
+    
+    return STATUS_SUCCESS;
 
 Cleanup:
 
-    if (NULL != Attribute) {
-        CmsFreeAttributeValues(Attribute->Values);
-        CmsFreePool(Attribute);
+    if (NULL != NewAttribute) {
+        CmsFreeAttributeValues(NewAttribute->Values);
+        CmsFreePool(NewAttribute);
     }
 
-    return NULL;
+    return Status;
 }
 
 VOID
@@ -303,53 +314,60 @@ CmsFreeAttributes (
     }
 }
 
-PCMS_SIGNER_INFO
+NTSTATUS
 CmsParseSignerInfo (
     _In_ PUINT8 SignerInfoData,
-    _In_ SIZE_T SignerInfosLength
+    _In_ SIZE_T SignerInfoLength,
+    _Out_ PCMS_SIGNER_INFO *SignerInfo
 )
 {
+    NTSTATUS Status;
     INT Result;
     PUINT8 Pointer;
     PUINT8 SignerInfoEnd;
     PUINT8 SignedAttributesEnd;
     PUINT8 UnsignedAttributesEnd;
     SIZE_T Length;
-    PCMS_SIGNER_INFO SignerInfo;
+    PCMS_SIGNER_INFO NewSignerInfo;
     PCMS_ATTRIBUTE Attribute;
     PCMS_ATTRIBUTE Node;
 
     Pointer = SignerInfoData;
-    SignerInfoEnd = SignerInfoData + SignerInfosLength;
+    SignerInfoEnd = SignerInfoData + SignerInfoLength;
 
-    SignerInfo = CmsAllocatePoolZero(sizeof(CMS_SIGNER_INFO));
+    NewSignerInfo = CmsAllocatePoolZero(sizeof(CMS_SIGNER_INFO));
 
-    if (NULL == SignerInfo) {
+    if (NULL == NewSignerInfo) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
         goto Cleanup;
     }
 
-    if (mbedtls_asn1_get_int(&Pointer, SignerInfoEnd, &SignerInfo->Version) != 0) {
+    if (mbedtls_asn1_get_int(&Pointer, SignerInfoEnd, &NewSignerInfo->Version) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    if (SignerInfo->Version != 1) {
+    if (NewSignerInfo->Version != 1) {
+        Status = STATUS_NOT_SUPPORTED;
         goto Cleanup;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    SignerInfo->IssuerAndSerialNumber.Data = Pointer;
-    SignerInfo->IssuerAndSerialNumber.Length = Length;
+    NewSignerInfo->IssuerAndSerialNumber.Data = Pointer;
+    NewSignerInfo->IssuerAndSerialNumber.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    SignerInfo->DigestAlgorithm.Data = Pointer;
-    SignerInfo->DigestAlgorithm.Length = Length;
+    NewSignerInfo->DigestAlgorithm.Data = Pointer;
+    NewSignerInfo->DigestAlgorithm.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
@@ -363,20 +381,21 @@ CmsParseSignerInfo (
             }
 
             if (0 != Result) {
+                Status = STATUS_INVALID_IMAGE_HASH;
                 goto Cleanup;
             }
 
-            Attribute = CmsParseAttribute(Pointer, Length);
+            Status = CmsParseAttribute(Pointer, Length, &Attribute);
 
-            if (NULL == Attribute) {
+            if (FALSE == NT_SUCCESS(Status)) {
                 goto Cleanup;
             }
 
-            if (NULL == SignerInfo->SignedAttributes) {
-                SignerInfo->SignedAttributes = Attribute;
+            if (NULL == NewSignerInfo->SignedAttributes) {
+                NewSignerInfo->SignedAttributes = Attribute;
             }
             else {
-                Node = SignerInfo->SignedAttributes;
+                Node = NewSignerInfo->SignedAttributes;
 
                 while (Node->Next != NULL) {
                     Node = Node->Next;
@@ -390,19 +409,21 @@ CmsParseSignerInfo (
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    SignerInfo->SignatureAlgorithm.Data = Pointer;
-    SignerInfo->SignatureAlgorithm.Length = Length;
+    NewSignerInfo->SignatureAlgorithm.Data = Pointer;
+    NewSignerInfo->SignatureAlgorithm.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_OCTET_STRING) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    SignerInfo->Signature.Data = Pointer;
-    SignerInfo->Signature.Length = Length;
+    NewSignerInfo->Signature.Data = Pointer;
+    NewSignerInfo->Signature.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC | 1) == 0) {
@@ -416,20 +437,21 @@ CmsParseSignerInfo (
             }
 
             if (0 != Result) {
+                Status = STATUS_INVALID_IMAGE_HASH;
                 goto Cleanup;
             }
 
-            Attribute = CmsParseAttribute(Pointer, Length);
+            Status = CmsParseAttribute(Pointer, Length, &Attribute);
 
-            if (NULL == Attribute) {
+            if (FALSE == NT_SUCCESS(Status)) {
                 goto Cleanup;
             }
 
-            if (NULL == SignerInfo->UnsignedAttributes) {
-                SignerInfo->UnsignedAttributes = Attribute;
+            if (NULL == NewSignerInfo->UnsignedAttributes) {
+                NewSignerInfo->UnsignedAttributes = Attribute;
             }
             else {
-                Node = SignerInfo->UnsignedAttributes;
+                Node = NewSignerInfo->UnsignedAttributes;
 
                 while (Node->Next != NULL) {
                     Node = Node->Next;
@@ -442,17 +464,19 @@ CmsParseSignerInfo (
         }
     }
 
-    return SignerInfo;
+    *SignerInfo = NewSignerInfo;
+
+    return STATUS_SUCCESS;
 
 Cleanup:
 
-    if (NULL != SignerInfo) {
-        CmsFreeAttributes(SignerInfo->SignedAttributes);
-        CmsFreeAttributes(SignerInfo->UnsignedAttributes);
-        CmsFreePool(SignerInfo);
+    if (NULL != NewSignerInfo) {
+        CmsFreeAttributes(NewSignerInfo->SignedAttributes);
+        CmsFreeAttributes(NewSignerInfo->UnsignedAttributes);
+        CmsFreePool(NewSignerInfo);
     }
 
-    return NULL;
+    return Status;
 }
 
 VOID
@@ -477,12 +501,14 @@ CmsFreeSignerInfos (
     }
 }
 
-PCMS_PKCS7_DER
+NTSTATUS
 CmsParsePkcs7Der (
     _In_ PUINT8 Pkcs7Data,
-    _In_ SIZE_T Pkcs7Length
+    _In_ SIZE_T Pkcs7Length,
+    _Out_ PCMS_PKCS7_DER *Pkcs7Der
 )
 {
+    NTSTATUS Status;
     INT Result;
     PUINT8 Buffer;
     PUINT8 Pointer;
@@ -492,7 +518,7 @@ CmsParsePkcs7Der (
     PUINT8 EncapsulatedContentInfoEnd;
     PUINT8 CertificatesEnd;
     PUINT8 SignerInfosEnd;
-    PCMS_PKCS7_DER Pkcs7Der;
+    PCMS_PKCS7_DER NewPkcs7Der;
     PCMS_SIGNER_INFO SignerInfos;
     PCMS_SIGNER_INFO Node;
     SIZE_T Length;
@@ -500,76 +526,87 @@ CmsParsePkcs7Der (
     Pointer = Pkcs7Data;
     Pkcs7End = Pkcs7Data + Pkcs7Length;
 
-    Pkcs7Der = CmsAllocatePoolZero(sizeof(CMS_PKCS7_DER));
+    NewPkcs7Der = CmsAllocatePoolZero(sizeof(CMS_PKCS7_DER));
 
-    if (NULL == Pkcs7Der) {
+    if (NULL == NewPkcs7Der) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
         goto Cleanup;
     }
 
-    mbedtls_x509_crt_init(&Pkcs7Der->SignedData.Certificates);
-    mbedtls_x509_crl_init(&Pkcs7Der->SignedData.CertificateRevocationLists);
+    mbedtls_x509_crt_init(&NewPkcs7Der->SignedData.Certificates);
+    mbedtls_x509_crl_init(&NewPkcs7Der->SignedData.CertificateRevocationLists);
 
     if (mbedtls_asn1_get_tag(&Pointer, Pkcs7End, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
     ContentInfoEnd = Pointer + Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentInfoEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
     if (Length != sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
     if (memcmp(Pointer, MBEDTLS_OID_PKCS7_SIGNED_DATA, sizeof(MBEDTLS_OID_PKCS7_SIGNED_DATA) - 1) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    Pkcs7Der->ContentTypeOid.Data = Pointer;
-    Pkcs7Der->ContentTypeOid.Length = Length;
+    NewPkcs7Der->ContentTypeOid.Data = Pointer;
+    NewPkcs7Der->ContentTypeOid.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
     ContentEnd = Pointer + Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    if (mbedtls_asn1_get_int(&Pointer, ContentEnd, &Pkcs7Der->SignedData.Version) != 0) {
+    if (mbedtls_asn1_get_int(&Pointer, ContentEnd, &NewPkcs7Der->SignedData.Version) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    Pkcs7Der->SignedData.DigestAlgorithms.Data = Pointer;
-    Pkcs7Der->SignedData.DigestAlgorithms.Length = Length;
+    NewPkcs7Der->SignedData.DigestAlgorithms.Data = Pointer;
+    NewPkcs7Der->SignedData.DigestAlgorithms.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
     EncapsulatedContentInfoEnd = Pointer + Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_OID) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
-    Pkcs7Der->SignedData.EncapsulatedContentInfo.ContentTypeOid.Data = Pointer;
-    Pkcs7Der->SignedData.EncapsulatedContentInfo.ContentTypeOid.Length = Length;
+    NewPkcs7Der->SignedData.EncapsulatedContentInfo.ContentTypeOid.Data = Pointer;
+    NewPkcs7Der->SignedData.EncapsulatedContentInfo.ContentTypeOid.Length = Length;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, EncapsulatedContentInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
-        Pkcs7Der->SignedData.EncapsulatedContentInfo.Content.Data = Pointer;
-        Pkcs7Der->SignedData.EncapsulatedContentInfo.Content.Length = Length;
+        NewPkcs7Der->SignedData.EncapsulatedContentInfo.Content.Data = Pointer;
+        NewPkcs7Der->SignedData.EncapsulatedContentInfo.Content.Length = Length;
         Pointer += Length;
     }
 
@@ -585,13 +622,20 @@ CmsParsePkcs7Der (
             }
 
             if (0 != Result) {
+                Status = STATUS_INVALID_IMAGE_HASH;
                 goto Cleanup;
             }
 
             Pointer += Length;
-            Result = mbedtls_x509_crt_parse_der(&Pkcs7Der->SignedData.Certificates, Buffer, Pointer - Buffer);
+            Result = mbedtls_x509_crt_parse_der(&NewPkcs7Der->SignedData.Certificates, Buffer, Pointer - Buffer);
+
+            if (MBEDTLS_ERR_X509_ALLOC_FAILED == Result) {
+                Status = STATUS_INSUFFICIENT_RESOURCES;
+                goto Cleanup;
+            }
 
             if (0 != Result) {
+                Status = STATUS_INVALID_IMAGE_HASH;
                 goto Cleanup;
             }
         }
@@ -609,19 +653,27 @@ CmsParsePkcs7Der (
             }
 
             if (0 != Result) {
+                Status = STATUS_INVALID_IMAGE_HASH;
                 goto Cleanup;
             }
 
             Pointer += Length;
-            Result = mbedtls_x509_crl_parse_der(&Pkcs7Der->SignedData.CertificateRevocationLists, Buffer, Pointer - Buffer);
+            Result = mbedtls_x509_crl_parse_der(&NewPkcs7Der->SignedData.CertificateRevocationLists, Buffer, Pointer - Buffer);
+
+            if (MBEDTLS_ERR_X509_ALLOC_FAILED == Result) {
+                Status = STATUS_INSUFFICIENT_RESOURCES;
+                goto Cleanup;
+            }
 
             if (0 != Result) {
+                Status = STATUS_INVALID_IMAGE_HASH;
                 goto Cleanup;
             }
         }
     }
 
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
         goto Cleanup;
     }
 
@@ -635,20 +687,21 @@ CmsParsePkcs7Der (
         }
 
         if (0 != Result) {
+            Status = STATUS_INVALID_IMAGE_HASH;
             goto Cleanup;
         }
 
-        SignerInfos = CmsParseSignerInfo(Pointer, Length);
-
-        if (NULL == SignerInfos) {
+        Status = CmsParseSignerInfo(Pointer, Length, &SignerInfos);
+        
+        if (FALSE == NT_SUCCESS(Status)) {
             goto Cleanup;
         }
 
-        if (NULL == Pkcs7Der->SignedData.SignerInfos) {
-            Pkcs7Der->SignedData.SignerInfos = SignerInfos;
+        if (NULL == NewPkcs7Der->SignedData.SignerInfos) {
+            NewPkcs7Der->SignedData.SignerInfos = SignerInfos;
         }
         else {
-            Node = Pkcs7Der->SignedData.SignerInfos;
+            Node = NewPkcs7Der->SignedData.SignerInfos;
 
             while (Node->Next != NULL) {
                 Node = Node->Next;
@@ -660,19 +713,21 @@ CmsParsePkcs7Der (
         Pointer += Length;
     }
 
-    return Pkcs7Der;
+    *Pkcs7Der = NewPkcs7Der;
+
+    return STATUS_SUCCESS;
 
 Cleanup:
 
-    if (NULL != Pkcs7Der) {
-        mbedtls_x509_crt_free(&Pkcs7Der->SignedData.Certificates);
-        mbedtls_x509_crl_free(&Pkcs7Der->SignedData.CertificateRevocationLists);
+    if (NULL != NewPkcs7Der) {
+        mbedtls_x509_crt_free(&NewPkcs7Der->SignedData.Certificates);
+        mbedtls_x509_crl_free(&NewPkcs7Der->SignedData.CertificateRevocationLists);
 
-        CmsFreeSignerInfos(Pkcs7Der->SignedData.SignerInfos);
-        CmsFreePool(Pkcs7Der);
+        CmsFreeSignerInfos(NewPkcs7Der->SignedData.SignerInfos);
+        CmsFreePool(NewPkcs7Der);
     }
 
-    return NULL;
+    return Status;
 }
 
 VOID
@@ -767,14 +822,15 @@ CmsRecursiveParsePkcs7Der (
     _In_ SIZE_T Pkcs7Length
 )
 {
+    NTSTATUS Status;
     PCMS_PKCS7_DER Pkcs7Der;
     mbedtls_x509_crt *Certificate;
     PCMS_ATTRIBUTE UnsignedAttribute;
     PCMS_ATTRIBUTE_VALUE UnsignedAttributeValue;
 
-    Pkcs7Der = CmsParsePkcs7Der(Pkcs7Data, Pkcs7Length);
+    Status = CmsParsePkcs7Der(Pkcs7Data, Pkcs7Length, &Pkcs7Der);
 
-    if (NULL != Pkcs7Der) {
+    if (FALSE != NT_SUCCESS(Status)) {
         Certificate = &Pkcs7Der->SignedData.Certificates;
 
         while (NULL != Certificate && NULL != Certificate->raw.p) {
