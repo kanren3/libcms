@@ -23,12 +23,6 @@
 #define MBEDTLS_OID_PKCS7_DIGESTED_DATA              MBEDTLS_OID_PKCS7 "\x05"
 #define MBEDTLS_OID_PKCS7_ENCRYPTED_DATA             MBEDTLS_OID_PKCS7 "\x06"
 
-typedef struct mbedtls_x509_crt CMS_X509_CERTIFICATE;
-typedef struct mbedtls_x509_crl CMS_X509_CRL;
-
-typedef CMS_X509_CERTIFICATE *PCMS_X509_CERTIFICATE;
-typedef CMS_X509_CRL *PCMS_X509_CRL;
-
 typedef struct _CMS_BLOB {
     PUINT8 Data;
     SIZE_T Length;
@@ -65,8 +59,8 @@ typedef struct _CMS_SIGNED_DATA {
     INT32 Version;
     CMS_BLOB DigestAlgorithms;
     CMS_ENCAPSULATED_CONTENT_INFO EncapsulatedContentInfo;
-    CMS_X509_CERTIFICATE Certificates;
-    CMS_X509_CRL CertificateRevocationLists;
+    mbedtls_x509_crt Certificates;
+    mbedtls_x509_crl CertificateRevocationLists;
     PCMS_SIGNER_INFO SignerInfos;
 } CMS_SIGNED_DATA, *PCMS_SIGNED_DATA;
 
@@ -746,7 +740,7 @@ int mbedtls_x509_crt_hash(char *buf, size_t size, const char *prefix, const mbed
 
 VOID
 CmsPrintCertificateInfo (
-    _In_ PCMS_X509_CERTIFICATE Certificate
+    _In_ mbedtls_x509_crt *Certificate
 )
 {
     PCHAR Buffer;
@@ -774,7 +768,7 @@ CmsRecursiveParsePkcs7Der (
 )
 {
     PCMS_PKCS7_DER Pkcs7Der;
-    PCMS_X509_CERTIFICATE Certificate;
+    mbedtls_x509_crt *Certificate;
     PCMS_ATTRIBUTE UnsignedAttribute;
     PCMS_ATTRIBUTE_VALUE UnsignedAttributeValue;
 
