@@ -39,9 +39,14 @@ typedef struct _CMS_ATTRIBUTE {
     struct _CMS_ATTRIBUTE *Next;
 } CMS_ATTRIBUTE, *PCMS_ATTRIBUTE;
 
+typedef struct _CMS_SIGNER_IDENTIFIER {
+    CMS_BLOB IssuerRaw;
+    CMS_BLOB SerialNumberRaw;
+} CMS_SIGNER_IDENTIFIER, *PCMS_SIGNER_IDENTIFIER;
+
 typedef struct _CMS_SIGNER_INFO {
     INT32 Version;
-    CMS_BLOB IssuerAndSerialNumber;
+    CMS_SIGNER_IDENTIFIER SignerIdentifier;
     CMS_BLOB DigestAlgorithm;
     PCMS_ATTRIBUTE SignedAttributes;
     CMS_BLOB SignatureAlgorithm;
@@ -209,7 +214,7 @@ CmsParseAttribute (
 {
     NTSTATUS Status;
     INT Result;
-    PUINT8 Buffer;
+    PUINT8 RawBuffer;
     PUINT8 Pointer;
     PUINT8 AttributeEnd;
     PUINT8 AttributeValuesEnd;
@@ -245,8 +250,8 @@ CmsParseAttribute (
     AttributeValuesEnd = Pointer + Length;
 
     while (TRUE) {
-        Buffer = Pointer;
-        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, Buffer[0]);
+        RawBuffer = Pointer;
+        Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, RawBuffer[0]);
 
         if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
             break;
@@ -257,7 +262,7 @@ CmsParseAttribute (
             goto Cleanup;
         }
 
-        Status = CmsParseAttributeValue(Buffer, Pointer + Length - Buffer, &AttributeValue);
+        Status = CmsParseAttributeValue(RawBuffer, Pointer + Length - RawBuffer, &AttributeValue);
 
         if (FALSE == NT_SUCCESS(Status)) {
             goto Cleanup;
@@ -323,8 +328,10 @@ CmsParseSignerInfo (
 {
     NTSTATUS Status;
     INT Result;
+    PUINT8 RawBuffer;
     PUINT8 Pointer;
     PUINT8 SignerInfoEnd;
+    PUINT8 SignerIdentifierEnd;
     PUINT8 SignedAttributesEnd;
     PUINT8 UnsignedAttributesEnd;
     SIZE_T Length;
@@ -357,8 +364,26 @@ CmsParseSignerInfo (
         goto Cleanup;
     }
 
-    NewSignerInfo->IssuerAndSerialNumber.Data = Pointer;
-    NewSignerInfo->IssuerAndSerialNumber.Length = Length;
+    SignerIdentifierEnd = Pointer + Length;
+
+    RawBuffer = Pointer;
+    if (mbedtls_asn1_get_tag(&Pointer, SignerIdentifierEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
+        goto Cleanup;
+    }
+
+    NewSignerInfo->SignerIdentifier.IssuerRaw.Data = RawBuffer;
+    NewSignerInfo->SignerIdentifier.IssuerRaw.Length = Pointer + Length - RawBuffer;
+    Pointer += Length;
+
+    RawBuffer = Pointer;
+    if (mbedtls_asn1_get_tag(&Pointer, SignerIdentifierEnd, &Length, MBEDTLS_ASN1_INTEGER) != 0) {
+        Status = STATUS_INVALID_IMAGE_HASH;
+        goto Cleanup;
+    }
+
+    NewSignerInfo->SignerIdentifier.SerialNumberRaw.Data = RawBuffer;
+    NewSignerInfo->SignerIdentifier.SerialNumberRaw.Length = Pointer + Length - RawBuffer;
     Pointer += Length;
 
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
@@ -510,7 +535,7 @@ CmsParsePkcs7Der (
 {
     NTSTATUS Status;
     INT Result;
-    PUINT8 Buffer;
+    PUINT8 RawBuffer;
     PUINT8 Pointer;
     PUINT8 Pkcs7End;
     PUINT8 ContentInfoEnd;
@@ -614,7 +639,7 @@ CmsParsePkcs7Der (
         CertificatesEnd = Pointer + Length;
 
         while (TRUE) {
-            Buffer = Pointer;
+            RawBuffer = Pointer;
             Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
 
             if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
@@ -627,7 +652,7 @@ CmsParsePkcs7Der (
             }
 
             Pointer += Length;
-            Result = mbedtls_x509_crt_parse_der(&NewPkcs7Der->SignedData.Certificates, Buffer, Pointer - Buffer);
+            Result = mbedtls_x509_crt_parse_der(&NewPkcs7Der->SignedData.Certificates, RawBuffer, Pointer - RawBuffer);
 
             if (MBEDTLS_ERR_X509_ALLOC_FAILED == Result) {
                 Status = STATUS_INSUFFICIENT_RESOURCES;
@@ -645,7 +670,7 @@ CmsParsePkcs7Der (
         CertificatesEnd = Pointer + Length;
 
         while (TRUE) {
-            Buffer = Pointer;
+            RawBuffer = Pointer;
             Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
 
             if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
@@ -658,7 +683,7 @@ CmsParsePkcs7Der (
             }
 
             Pointer += Length;
-            Result = mbedtls_x509_crl_parse_der(&NewPkcs7Der->SignedData.CertificateRevocationLists, Buffer, Pointer - Buffer);
+            Result = mbedtls_x509_crl_parse_der(&NewPkcs7Der->SignedData.CertificateRevocationLists, RawBuffer, Pointer - RawBuffer);
 
             if (MBEDTLS_ERR_X509_ALLOC_FAILED == Result) {
                 Status = STATUS_INSUFFICIENT_RESOURCES;
@@ -854,6 +879,9 @@ CmsRecursiveParsePkcs7Der (
         }
 
         CmsFreePkcs7Der(Pkcs7Der);
+    }
+    else {
+        __debugbreak();
     }
 }
 
