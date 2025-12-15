@@ -249,13 +249,9 @@ CmsParseAttribute (
 
     AttributeValuesEnd = Pointer + Length;
 
-    while (TRUE) {
+    while (Pointer < AttributeValuesEnd) {
         RawBuffer = Pointer;
         Result = mbedtls_asn1_get_tag(&Pointer, AttributeValuesEnd, &Length, RawBuffer[0]);
-
-        if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
-            break;
-        }
 
         if (0 != Result) {
             Status = STATUS_INVALID_IMAGE_HASH;
@@ -398,12 +394,8 @@ CmsParseSignerInfo (
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
         SignedAttributesEnd = Pointer + Length;
 
-        while (TRUE) {
+        while (Pointer < SignedAttributesEnd) {
             Result = mbedtls_asn1_get_tag(&Pointer, SignedAttributesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
-
-            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
-                break;
-            }
 
             if (0 != Result) {
                 Status = STATUS_INVALID_IMAGE_HASH;
@@ -454,7 +446,7 @@ CmsParseSignerInfo (
     if (mbedtls_asn1_get_tag(&Pointer, SignerInfoEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC | 1) == 0) {
         UnsignedAttributesEnd = Pointer + Length;
 
-        while (TRUE) {
+        while (Pointer < UnsignedAttributesEnd) {
             Result = mbedtls_asn1_get_tag(&Pointer, UnsignedAttributesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
 
             if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
@@ -638,13 +630,9 @@ CmsParsePkcs7Der (
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC) == 0) {
         CertificatesEnd = Pointer + Length;
 
-        while (TRUE) {
+        while (Pointer < CertificatesEnd) {
             RawBuffer = Pointer;
-            Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
-
-            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
-                break;
-            }
+            Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, RawBuffer[0]);
 
             if (0 != Result) {
                 Status = STATUS_INVALID_IMAGE_HASH;
@@ -652,16 +640,14 @@ CmsParsePkcs7Der (
             }
 
             Pointer += Length;
-            Result = mbedtls_x509_crt_parse_der(&NewPkcs7Der->SignedData.Certificates, RawBuffer, Pointer - RawBuffer);
 
-            if (MBEDTLS_ERR_X509_ALLOC_FAILED == Result) {
-                Status = STATUS_INSUFFICIENT_RESOURCES;
-                goto Cleanup;
-            }
+            if ((MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) == RawBuffer[0]) {
+                Result = mbedtls_x509_crt_parse_der(&NewPkcs7Der->SignedData.Certificates, RawBuffer, Pointer - RawBuffer);
 
-            if (0 != Result) {
-                Status = STATUS_INVALID_IMAGE_HASH;
-                goto Cleanup;
+                if (0 != Result) {
+                    Status = STATUS_UNSUCCESSFUL;
+                    goto Cleanup;
+                }
             }
         }
     }
@@ -669,13 +655,9 @@ CmsParsePkcs7Der (
     if (mbedtls_asn1_get_tag(&Pointer, ContentEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC | 1) == 0) {
         CertificatesEnd = Pointer + Length;
 
-        while (TRUE) {
+        while (Pointer < CertificatesEnd) {
             RawBuffer = Pointer;
-            Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
-
-            if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
-                break;
-            }
+            Result = mbedtls_asn1_get_tag(&Pointer, CertificatesEnd, &Length, RawBuffer[0]);
 
             if (0 != Result) {
                 Status = STATUS_INVALID_IMAGE_HASH;
@@ -683,16 +665,14 @@ CmsParsePkcs7Der (
             }
 
             Pointer += Length;
-            Result = mbedtls_x509_crl_parse_der(&NewPkcs7Der->SignedData.CertificateRevocationLists, RawBuffer, Pointer - RawBuffer);
 
-            if (MBEDTLS_ERR_X509_ALLOC_FAILED == Result) {
-                Status = STATUS_INSUFFICIENT_RESOURCES;
-                goto Cleanup;
-            }
+            if ((MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) == RawBuffer[0]) {
+                Result = mbedtls_x509_crl_parse_der(&NewPkcs7Der->SignedData.CertificateRevocationLists, RawBuffer, Pointer - RawBuffer);
 
-            if (0 != Result) {
-                Status = STATUS_INVALID_IMAGE_HASH;
-                goto Cleanup;
+                if (0 != Result) {
+                    Status = STATUS_UNSUCCESSFUL;
+                    goto Cleanup;
+                }
             }
         }
     }
@@ -704,12 +684,8 @@ CmsParsePkcs7Der (
 
     SignerInfosEnd = Pointer + Length;
 
-    while (TRUE) {
+    while (Pointer < SignerInfosEnd) {
         Result = mbedtls_asn1_get_tag(&Pointer, SignerInfosEnd, &Length, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
-
-        if (MBEDTLS_ERR_ASN1_OUT_OF_DATA == Result) {
-            break;
-        }
 
         if (0 != Result) {
             Status = STATUS_INVALID_IMAGE_HASH;
@@ -879,9 +855,6 @@ CmsRecursiveParsePkcs7Der (
         }
 
         CmsFreePkcs7Der(Pkcs7Der);
-    }
-    else {
-        __debugbreak();
     }
 }
 
